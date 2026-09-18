@@ -3520,6 +3520,39 @@
 			var wheel_y = 0;
 			var viewport_draw_raf = 0;
 
+			// Every horizontal zoom control funnels through here, so they all
+			// stop at the same place and always leave the viewport valid:
+			//   1 <= Z <= N / MinVisibleSamples,  V = D / Z,  0 <= L <= D - V
+			// anchor_fraction says where anchor_time should sit afterwards:
+			// 0 at the left edge, 0.5 in the middle, 1 at the right.
+			function clampHorizontalViewport ( requested_zoom, anchor_time, anchor_fraction ) {
+				var buffer = wavesurfer.backend && wavesurfer.backend.buffer;
+				if (!buffer || !buffer.length) return false;
+
+				var dur = wavesurfer.getDuration ();
+				if (!(dur > 0)) return false;
+
+				var max_zoom = wavesurfer.MaxZoomFactor ();
+				var z = requested_zoom;
+				if (!(z > 1)) z = 1;
+				else if (z > max_zoom) z = max_zoom;
+
+				var vis = dur / z;
+				var left = anchor_time - vis * anchor_fraction;
+
+				if (left > dur - vis) left = dur - vis;
+				if (!(left > 0)) left = 0;
+
+				if (z === wavesurfer.ZoomFactor && left === wavesurfer.LeftProgress)
+					return false;
+
+				wavesurfer.ZoomFactor = z;
+				wavesurfer.VisibleDuration = vis;
+				wavesurfer.LeftProgress = left;
+
+				return true;
+			}
+
 			function queueViewportDraw () {
 				if (viewport_draw_raf) return ;
 
@@ -3552,21 +3585,10 @@
 
 				var old_vis = wavesurfer.VisibleDuration || dur / wavesurfer.ZoomFactor;
 				var at = wavesurfer.LeftProgress + old_vis * where;
-				var next = Math.max (1, wavesurfer.ZoomFactor * factor);
-				var vis = dur / next;
 
-				if (vis <= 0.5) return ;
-
-				wavesurfer.ZoomFactor = next;
-				wavesurfer.VisibleDuration = vis;
-				wavesurfer.LeftProgress = at - vis * where;
-
-				if (wavesurfer.LeftProgress + vis > dur)
-					wavesurfer.LeftProgress = dur - vis;
-				if (wavesurfer.LeftProgress < 0)
-					wavesurfer.LeftProgress = 0;
-
-				queueViewportDraw ();
+				// keep whatever sits under the pointer under the pointer
+				if (clampHorizontalViewport ( wavesurfer.ZoomFactor * factor, at, where ))
+					queueViewportDraw ();
 			}
 
 			function waveWheel ( e ) {
@@ -3657,73 +3679,28 @@
 		app.listenFor ('RequestZoom', function ( diff, mode ) {
 			var wv = wavesurfer;
 
+			if (mode !== -1 && mode !== 1) return ;
+
 			// compute new ZoomFactor...
 			diff *= wv.ZoomFactor;
 
-			// compute availabel left ZoomFactor
+			var width = wv.drawer.width;
+			var available_pixels = width - width/wv.ZoomFactor;
+			var target = wv.ZoomFactor - 1;
+			if (target <= 0) return ;
+
+			var step = (diff*target)/available_pixels;
+			var next = mode === -1 ? wv.ZoomFactor + step : wv.ZoomFactor - step;
+			var anchor = wv.LeftProgress;
+
+			// the left handle drags the viewport along with it; the right handle
+			// leaves the left edge where it is
 			if (mode === -1)
-			{
-				var width = wv.drawer.width;
-				var available_pixels = width - width/wv.ZoomFactor;
-				var target = wv.ZoomFactor - 1;
-				if (target <= 0) return ;
+				anchor += (wv.getDuration () / (next > 1 ? next : 1)) * (diff / width);
 
-				 var old_zoomfactor = wv.ZoomFactor;
-				 wv.ZoomFactor += (diff*target)/available_pixels;
-				 if (wv.ZoomFactor < 1) wv.ZoomFactor = 1;
-
-				 var new_vis_dur = wv.getDuration() / wv.ZoomFactor;
-
-				 if (new_vis_dur <= 0.5)
-				 {
-				 	wv.ZoomFactor = old_zoomfactor;
-				 	return ;
-				 }
-
-				 wv.VisibleDuration = new_vis_dur;
-
-				var time_moved = wv.VisibleDuration * (diff / wv.drawer.width);
-				wv.LeftProgress += time_moved;
-
-				if (wv.LeftProgress + wv.VisibleDuration >= wv.getDuration ())
-				{
-					wv.LeftProgress = wv.getDuration () - wv.VisibleDuration;
-				}
-				else if (wv.LeftProgress < 0) {
-					wv.LeftProgress = 0;
-				}
-			}
-			else if (mode === 1)
-			{
-				var width = wv.drawer.width;
-				var available_pixels = width - width/wv.ZoomFactor;
-				var target = wv.ZoomFactor - 1;
-				if (target <= 0) return ;
-
-				var old_factor = wv.ZoomFactor;
-				wv.ZoomFactor -= (diff*target)/available_pixels;
-				if (wv.ZoomFactor < 1) wv.ZoomFactor = 1;
-				var temp = wv.getDuration() / wv.ZoomFactor;
-				if (temp + wv.LeftProgress > wv.getDuration()) {
-					wv.ZoomFactor = old_factor;
-				}
-				else
-				{
-					if (temp <= 0.5)
-					{
-						wv.ZoomFactor = old_factor;
-						return ;
-					}
-
-					wv.VisibleDuration = temp;
-				}
-				// -
-			}
-
-			// wv.ZoomFactor -= Math.abs (diff / (wv.drawer.width / 2));
-			// console.log( diff + " BLAH " + wv.ZoomFactor + '   ' +  (diff / wv.drawer.width) );
+			if (clampHorizontalViewport ( next, anchor, 0 ))
 				queueViewportDraw ();
-			});
+		});
 
 			app.listenFor ('RequestPan', function( diff, mode ) {
 				var wv = wavesurfer;

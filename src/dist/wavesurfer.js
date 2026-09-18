@@ -789,6 +789,37 @@ function _inherits(subClass, superClass) { if (typeof superClass !== "function" 
             return time_s; // + ':' + (miliseconds.toFixed(2)+'').substr(2);
         }
 
+        // smallest 1 / 2 / 5 x 10^n at or above the wanted span
+        function niceTimeInterval ( target ) {
+            if (!(target > 0)) return 1;
+
+            var exp = Math.floor (Math.log (target) / Math.LN10);
+            var base = Math.pow (10, exp);
+            var f = target / base;
+            var mult = f <= 1 ? 1 : (f <= 2 ? 2 : (f <= 5 ? 5 : 10));
+
+            return mult * base;
+        }
+
+        function rulerLabel ( time, interval, by_sample, rate ) {
+            if (by_sample) return '#' + Math.round (time * rate);
+            if (interval >= 1) return formatTime (time, 3);
+
+            // sub-second ticks read in milliseconds, and only gain a decimal
+            // once the interval is finer than a millisecond -- never claim
+            // precision the tick spacing does not have
+            var ms = (time - Math.floor (time)) * 1000;
+            var txt = interval >= 0.001 ? '' + Math.round (ms) : ms.toFixed (1);
+
+            if (parseFloat (txt) >= 1000) txt = interval >= 0.001 ? '999' : '999.9';
+
+            var dot = txt.indexOf ('.');
+            var ip = dot < 0 ? txt : txt.slice (0, dot);
+            while (ip.length < 3) ip = '0' + ip;
+
+            return formatTime (time, 3) + ':' + ip + (dot < 0 ? '' : txt.slice (dot));
+        }
+
 var MultiCanvas = function (_Drawer) {
     _inherits(MultiCanvas, _Drawer);
 
@@ -1103,7 +1134,8 @@ var MultiCanvas = function (_Drawer) {
                     height = _ref2.height,
                     offsetY = _ref2.offsetY,
                     halfH = _ref2.halfH,
-                    peaks = _ref2.peaks;
+                    peaks = _ref2.peaks,
+                    drawChannel = _ref2.channelIndex;
 
                     if (_this5.params.timeline)
                     {
@@ -1125,7 +1157,7 @@ var MultiCanvas = function (_Drawer) {
                 // if drawWave was called within ws.empty we don't pass a start and
                 // end and simply want a flat line
                 if (start !== undefined) {
-                    _this5.drawLine(_this5.params.limits, _this5.params.timeline, peaks, absmax, halfH, offsetY, start, end);
+                    _this5.drawLine(_this5.params.limits, _this5.params.timeline, peaks, absmax, halfH, offsetY, start, end, drawChannel);
                 }
 
                 // Always draw a median line
@@ -1149,13 +1181,13 @@ var MultiCanvas = function (_Drawer) {
 
     }, {
         key: 'drawLine',
-        value: function drawLine(lim, timeline, peaks, absmax, halfH, offsetY, start, end) {
+        value: function drawLine(lim, timeline, peaks, absmax, halfH, offsetY, start, end, drawChannel) {
             var _this6 = this;
 
             this.canvases.forEach(function (entry) {
                // _this6.setFillStyles(entry);
 
-                _this6.drawLineToContext(lim, timeline, entry, entry.waveCtx, peaks, absmax, halfH, offsetY, start, end);
+                _this6.drawLineToContext(lim, timeline, entry, entry.waveCtx, peaks, absmax, halfH, offsetY, start, end, drawChannel);
                 /*this.drawLineToContext(
                     entry,
                     entry.progressCtx,
@@ -1186,8 +1218,81 @@ var MultiCanvas = function (_Drawer) {
          */
 
     }, {
+        key: 'drawSamplesToContext',
+        value: function drawSamplesToContext (entry, ctx, channelIndex, absmax, halfH, offsetY, firstCol, scale) {
+            var lod = this.lod;
+            var buf = lod.buffer;
+            var chans = buf.numberOfChannels;
+            var chan = buf.getChannelData (channelIndex < chans ? channelIndex : chans - 1);
+
+            var rate = lod.rate;
+            var left = lod.left;
+            var visible = lod.visible;
+            var total_width = lod.width;
+            var n = chan.length;
+
+            // inclusive range, one sample either side so the line does not come
+            // apart at the canvas edges
+            var from = Math.floor (left * rate) - 1;
+            var to = Math.ceil ((left + visible) * rate) + 1;
+            if (from < 0) from = 0;
+            if (to > n - 1) to = n - 1;
+            if (to < from) return;
+
+            // defensive: the mode threshold already bounds this to one sample
+            // per canvas pixel, so the visible range cannot outgrow the canvas
+            if (to - from > total_width * 8 + 4) to = from + (total_width * 8 + 4);
+
+            var color = ctx.fillStyle;
+            var ratio = this.params.pixelRatio || 1;
+            var x_offset = firstCol * scale;
+            var px_per_sample = total_width / (visible * rate);
+            var i = void 0;
+            var x = void 0;
+            var h = void 0;
+
+            ctx.save();
+            ctx.strokeStyle = color;
+            ctx.lineWidth = ratio;
+            ctx.lineJoin = 'round';
+            ctx.beginPath();
+
+            for (i = from; i <= to; ++i) {
+                x = ((i / rate) - left) / visible * total_width - x_offset;
+
+                h = chan[i] / absmax * halfH;
+                if (h > halfH) h = halfH;
+                else if (h < -halfH) h = -halfH;
+
+                if (i === from) ctx.moveTo (x, halfH - h + offsetY);
+                else ctx.lineTo (x, halfH - h + offsetY);
+            }
+            ctx.stroke();
+
+            if (lod.points) {
+                var r = 2 * ratio;
+                if (r > px_per_sample / 3) r = px_per_sample / 3;
+
+                if (r >= 0.5) {
+                    for (i = from; i <= to; ++i) {
+                        x = ((i / rate) - left) / visible * total_width - x_offset;
+
+                        h = chan[i] / absmax * halfH;
+                        if (h > halfH) h = halfH;
+                        else if (h < -halfH) h = -halfH;
+
+                        ctx.beginPath();
+                        ctx.arc (x, halfH - h + offsetY, r, 0, 6.283185307179586);
+                        ctx.fill();
+                    }
+                }
+            }
+
+            ctx.restore();
+        }
+    }, {
         key: 'drawLineToContext',
-        value: function drawLineToContext (lim, timeline, entry, ctx, peaks, absmax, halfH, offsetY, start, end) {
+        value: function drawLineToContext (lim, timeline, entry, ctx, peaks, absmax, halfH, offsetY, start, end, drawChannel) {
             if (!ctx) {
                 return;
             }
@@ -1224,10 +1329,9 @@ var MultiCanvas = function (_Drawer) {
             ctx.moveTo((canvasStart - first) * scale + this.halfPixel, halfH + offsetY);
 
 
-            var chan_index = 0;
-            if (offsetY > 30) {
-                chan_index = 1;
-            }
+            var chan_index = drawChannel === undefined ?
+                (offsetY > 30 ? 1 : 0) :
+                drawChannel;
 
             
             //halfH -= 10;
@@ -1247,6 +1351,11 @@ var MultiCanvas = function (_Drawer) {
             //};
 
             // var foo = Date.now();
+
+            if (this.lod) {
+                this.drawSamplesToContext (entry, ctx, chan_index, absmax, halfH, offsetY, first, scale);
+            }
+            else {
 
             var temp_end = canvasEnd;
             if (peaks.length <= temp_end * 2)
@@ -1290,6 +1399,8 @@ var MultiCanvas = function (_Drawer) {
             ctx.closePath();
             ctx.fill();
 
+            }
+
             if (lim)
             {
                 // use absmax for proper rendering of the limits....
@@ -1316,120 +1427,90 @@ var MultiCanvas = function (_Drawer) {
                 ctx.fillStyle = '#fff';
 
                 // draw ruler
-                var durr = PKAudioEditor.engine.wavesurfer.VisibleDuration;
-                var offs = PKAudioEditor.engine.wavesurfer.LeftProgress;
-                var total = PKAudioEditor.engine.wavesurfer.getDuration();
-                var zoom = PKAudioEditor.engine.wavesurfer.ZoomFactor;
-                var width = PKAudioEditor.engine.wavesurfer.drawer.width;
+                var ws_ = PKAudioEditor.engine.wavesurfer;
+                var durr = ws_.VisibleDuration;
+                var offs = ws_.LeftProgress;
+                var view_w = this.width;
+                var lod_ = this.lod;
 
-                if (zoom >= 1)
+                if (durr > 0 && view_w > 0)
                 {
-                        width *= zoom;
+                    ctx.textAlign = 'center';
 
-                        var percentage = offs / total;
-                        var left_offset = (percentage * width);
+                    ctx.fillStyle = '#111';
+                    ctx.fillRect(0, 0, view_w, 24);
+                    ctx.fillStyle = '#aaa';
+                    ctx.strokeStyle = '#aaa';
 
-                        //var left = 0;
-                        //var data = [];
-                        var x = 0;
-                        var pixel_distance = (width / total);
+                    // Ticks come from the visible range, so the loop is bounded
+                    // by what fits on the canvas rather than by the length of
+                    // the file. The old bound was total * 10, which gave zero
+                    // iterations -- and so no ruler at all -- under 100 ms.
+                    var rate_ = lod_ ? lod_.rate : 0;
+                    var by_sample = !!(lod_ && lod_.points && rate_ > 0);
 
-                        //ctx.font = "12px Arial lighter";
-                        ctx.textAlign = 'center';
+                    var interval = niceTimeInterval (durr * 80 / view_w);
 
-                        ctx.fillStyle = '#111';
-                        ctx.fillRect(0, 0, this.width, 24);
-                        ctx.fillStyle = '#aaa';
-                        ctx.strokeStyle = '#aaa';
-
-                        // every 60 pixels put something
-                        // console.log( pixel_distance );
-
-                        if (pixel_distance < 60) {
-                            pixel_distance = 60;
-                        }
-                        else if (pixel_distance > 160)
-                        {
-                            pixel_distance /= ((pixel_distance / 160) >> 0) + 1;
-                        }
-
-
-                        var elements = width / pixel_distance;
-                        var previous_time = 0;
-
-                        for (var i = 0; i < (total*10); ++i)
-                        {
-                            if (x - left_offset > width - 2)
-                            {
-                                break;
-                            }
-
-                            if (x - left_offset >= -2 && x - left_offset < width - 2)
-                            {
-                                var prc = x / width;
-                                var timespot = prc * total;
-
-                                var format = 3;
-
-                                var diff = timespot - previous_time;
-                                if (diff < 1.0)
-                                {
-                                    format = 1;
-                                }
-                                else if (diff < 60)
-                                {
-                                    format = 2;
-                                }
-
-                                previous_time = timespot;
-
-                                ctx.fillText( formatTime (timespot, format), x - left_offset, 12);
-                            }
-
-                            x += pixel_distance;
-                        }
-
-                        ctx.beginPath();       // Start a new path
-
-                        x = 0;
-
-                        for (var i = 0; i < (total*10); ++i)
-                        {
-                            if (x - left_offset > width - 2)
-                            {
-                                break;
-                            }
-
-                            if (x - left_offset >= -2 && x - left_offset < width - 2)
-                            {
-                                ctx.moveTo(x - left_offset, 16);    // Move the pen to (30, 50)
-                                ctx.lineTo(x - left_offset, 24);  // Draw a line to (150, 100)
-                            }
-
-                            x += pixel_distance;
-                        }
-
-                        x = pixel_distance / 2;
-                        for (var i = 0; i < (total*10); ++i)
-                        {
-                            if (x - left_offset > width - 2)
-                            {
-                                break;
-                            }
-
-                            if (x - left_offset >= -2 && x - left_offset < width - 2)
-                            {
-                                ctx.moveTo(x - left_offset, 19);    // Move the pen to (30, 50)
-                                ctx.lineTo(x - left_offset, 24);  // Draw a line to (150, 100)
-                            }
-
-                            x += pixel_distance;
-                        }
-
-
-                        ctx.stroke(); 
+                    if (by_sample) {
+                        // snap to whole samples so the "#n" labels are exact
+                        var per_tick = Math.round (interval * rate_);
+                        if (per_tick < 1) per_tick = 1;
+                        interval = per_tick / rate_;
                     }
+
+                    var max_ticks = Math.ceil (view_w / 40) + 4;
+                    var last_t = offs + durr;
+                    var drawn = 0;
+                    var tick = void 0;
+                    var px = void 0;
+
+                    ctx.beginPath();
+
+                    for (tick = Math.ceil (offs / interval - 1e-9) * interval;
+                         tick <= last_t + 1e-12 && drawn < max_ticks;
+                         tick += interval, ++drawn)
+                    {
+                        px = (tick - offs) / durr * view_w;
+                        if (px < -2 || px > view_w + 2) continue;
+
+                        ctx.fillText (rulerLabel (tick, interval, by_sample, rate_), px, 12);
+                        ctx.moveTo (px, 16);
+                        ctx.lineTo (px, 24);
+                    }
+
+                    // if the nice interval managed to skip the window entirely,
+                    // still mark both edges so the ruler is never blank
+                    if (drawn === 0) {
+                        ctx.fillText (rulerLabel (offs, interval, by_sample, rate_), 18, 12);
+                        ctx.fillText (rulerLabel (last_t, interval, by_sample, rate_), view_w - 18, 12);
+                        ctx.moveTo (0.5, 16);
+                        ctx.lineTo (0.5, 24);
+                        ctx.moveTo (view_w - 0.5, 16);
+                        ctx.lineTo (view_w - 0.5, 24);
+                    }
+
+                    // minor ticks only while they stay far enough apart to read
+                    var minor = interval / 2;
+
+                    if (minor / durr * view_w >= 40) {
+                        var dm = 0;
+                        var m = void 0;
+
+                        for (m = Math.ceil (offs / minor - 1e-9) * minor;
+                             m <= last_t + 1e-12 && dm < max_ticks * 2;
+                             m += minor, ++dm)
+                        {
+                            px = (m - offs) / durr * view_w;
+                            if (px < -2 || px > view_w + 2) continue;
+
+                            ctx.moveTo (px, 19);
+                            ctx.lineTo (px, 24);
+                        }
+                    }
+
+                    ctx.stroke();
                 }
+            }
 
                 this.RCB && this.RCB();
                 ctx.fillStyle = this.params.waveColor;
@@ -1542,7 +1623,8 @@ var MultiCanvas = function (_Drawer) {
                     height: height,
                     offsetY: offsetY,
                     halfH: halfH,
-                    peaks: peaks
+                    peaks: peaks,
+                    channelIndex: channelIndex
                 });
             }();
         }
@@ -2590,6 +2672,17 @@ var WaveSurfer = function (_util$Observer) {
             });
 
 
+            // Smallest viewport every horizontal zoom control will stop at,
+            // measured in PCM samples rather than seconds so that clips
+            // shorter than a second stay zoomable. engine.js reads this too.
+            this.MinVisibleSamples = 2;
+
+            this.MaxZoomFactor = function () {
+                var buf = _this5.backend && _this5.backend.buffer;
+                if (!buf || !buf.length) return 1;
+                return Math.max (1, buf.length / Math.min (_this5.MinVisibleSamples, buf.length));
+            };
+
             this.ResetZoom = function () {
                 _this5.ZoomFactor = 1;
                 _this5.LeftProgress = 0;
@@ -2649,9 +2742,8 @@ var WaveSurfer = function (_util$Observer) {
                 var width = _this5.drawer.width;
                 var duration = _this5.VisibleDuration;
 
-                var last_ = width * (_this5.ZoomFactor - (step/Math.abs(step))) >> 0;
-                var sampleSize_ = _this5.backend.buffer.length / last_;
-                if (sampleSize_ < 1.0) {
+                var next_ = _this5.ZoomFactor - (step/Math.abs(step));
+                if (next_ > _this5.ZoomFactor && next_ > _this5.MaxZoomFactor ()) {
                     return ;
                 }
 
@@ -3208,6 +3300,28 @@ var WaveSurfer = function (_util$Observer) {
          */
 
     }, {
+        key: 'computeLod',
+        value: function computeLod(width) {
+            var buf = this.backend ? this.backend.buffer : null;
+            if (!buf || !buf.length || !(width > 0)) return null;
+
+            var visible = this.VisibleDuration || this.getDuration();
+            if (!(visible > 0)) return null;
+
+            // source samples represented by one canvas pixel
+            var spp = visible * buf.sampleRate / width;
+            if (!(spp <= 1)) return null;
+
+            return {
+                buffer: buf,
+                rate: buf.sampleRate,
+                left: this.LeftProgress,
+                visible: visible,
+                width: width,
+                points: spp <= 0.125
+            };
+        }
+    }, {
         key: 'drawBuffer',
         value: function drawBuffer(force) {
 
@@ -3222,6 +3336,10 @@ var WaveSurfer = function (_util$Observer) {
             var peaks = void 0;
             // console.log( width, start, end );
             peaks = this.backend.getPeaks(width, start, end, force);
+
+            // Once a canvas pixel covers one PCM sample or less, peak columns
+            // stop carrying information -- hand the drawer the samples instead.
+            this.drawer.lod = this.computeLod(width);
             this.drawer.drawPeaks(peaks, width, 0, end, peaks.length, this.backend.shift);
 
 
@@ -4527,16 +4645,26 @@ var WebAudio = function (_util$Observer) {
             for (c = 0; c < channels; ++c) {
                 var peaks = this.splitPeaks[c];
                 var chan = this.buffer.getChannelData(c);
+                var chan_len = chan.length;
+                // when a column spans fewer samples than the stride, stepping
+                // would skip past the column and report it as silence
+                var step_c = sampleSize < sampleStep ? 1 : sampleStep;
                 var i = void 0;
 
                 for (i = init; i <= length; ++i) {
-                    var start = first + (i * sampleSize) >> 0;
-                    var end = (start + sampleSize) >> 0;
+                    var start = (first + i * sampleSize) >> 0;
+                    var end = (first + (i + 1) * sampleSize) >> 0;
                     var min = 0;
                     var max = 0;
                     var j = void 0;
 
-                    for (j = start; j < end; j += sampleStep) {
+                    // a column narrower than one sample used to give
+                    // start === end, so nothing was read and it rendered silent
+                    if (start < 0) start = 0;
+                    if (end <= start) end = start + 1;
+                    if (end > chan_len) end = chan_len;
+
+                    for (j = start; j < end; j += step_c) {
                         var value = chan[j];
 
 
