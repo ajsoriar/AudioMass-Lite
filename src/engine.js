@@ -1253,6 +1253,47 @@
 			*/
 		});
 
+		app.listenFor ('RequestActionTrim', function () {
+			if (!q.is_ready) return ;
+
+			var region = wavesurfer.regions.list[0];
+			if (!region) return (false);
+
+			var start = q.TrimTo (region.start, 3);
+			var end = q.TrimTo ((region.end - region.start), 3);
+
+			if (end <= 0) return (false);
+
+			// selection already spans the whole file - nothing to drop
+			if (start <= 0 && (start/1 + end/1) >= q.TrimTo (wavesurfer.getDuration (), 3))
+				return (false);
+
+			app.fireEvent ('RequestPause');
+
+			app.fireEvent ('StateRequestPush', {
+				desc : 'Trim',
+				meta : [ start, end ],
+				data : wavesurfer.backend.buffer
+			});
+
+			AudioUtils.Crop (
+				start,
+				end
+			);
+			wavesurfer.regions.clear();
+
+			// the file is now the selection: ZoomFactor is a multiple of the full
+			// length and LeftProgress is in seconds, so both just went stale
+			wavesurfer.ZoomFactor = 1;
+			wavesurfer.LeftProgress = 0;
+			wavesurfer.ForceDraw ();
+			wavesurfer.fireEvent ('DidZoom');
+
+			app.fireEvent ('RequestSeekTo', 0);
+
+			OneUp ('Trim :: kept ' + q.TrimTo (start, 2) + ' to ' + q.TrimTo (start/1 + end/1, 2), 1100);
+		});
+
 		app.listenFor ('RequestActionCopy', function () {
 			if (!q.is_ready) return ;
 

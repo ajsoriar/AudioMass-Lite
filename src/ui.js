@@ -3300,6 +3300,24 @@
 			UI.fireEvent( 'RequestActionCut', 1);
 			this.blur();
 		};
+
+		var trim_btn = d.createElement ('button');
+		trim_btn.setAttribute('tabIndex', -1);
+		trim_btn.className = 'pk_btn icon-scissors pk_inact';
+		trim_btn.innerHTML = '<span>Trim to Selection (Shift + T)</span>';
+		actions.appendChild ( trim_btn );
+
+		trim_btn.onclick = function() {
+			UI.fireEvent( 'RequestActionTrim');
+			this.blur();
+		};
+
+		UI.KeyHandler.addCallback ('KeyShiftT', function( k, m, e ) {
+			if (UI.InteractionHandler.on || (e && (e.ctrlKey || e.metaKey))) return ;
+
+			trim_btn.click ();
+		},[16, 84]);
+
 		UI.listenFor ('DidSelectClip', function () {
 			copy_btn.classList.remove ('pk_inact');
 			cut_btn.classList.remove ('pk_inact');
@@ -3394,11 +3412,13 @@
 			{
 				copy_btn.classList.add ('pk_inact');
 				cut_btn.classList.add  ('pk_inact');
+				trim_btn.classList.add ('pk_inact');
 			}
 			else
 			{
 				copy_btn.classList.remove ('pk_inact');
 				cut_btn.classList.remove ('pk_inact');
+				trim_btn.classList.remove ('pk_inact');
 			}
 			btn_clear_selection.classList.remove  ('pk_inact');
 			
@@ -3415,6 +3435,7 @@
 		UI.listenFor ('DidDestroyRegion', function () {
 			copy_btn.classList.add ('pk_inact');
 			cut_btn.classList.add  ('pk_inact');
+			trim_btn.classList.add ('pk_inact');
 			btn_clear_selection.classList.add  ('pk_inact');
 			closeSB ();
 			sr = null;
