@@ -801,17 +801,21 @@ function _inherits(subClass, superClass) { if (typeof superClass !== "function" 
             return mult * base;
         }
 
-        function rulerLabel ( time, interval, by_sample, rate ) {
-            if (by_sample) return '#' + Math.round (time * rate);
+        function rulerLabel ( time, interval ) {
             if (interval >= 1) return formatTime (time, 3);
 
-            // sub-second ticks read in milliseconds, and only gain a decimal
-            // once the interval is finer than a millisecond -- never claim
-            // precision the tick spacing does not have
-            var ms = (time - Math.floor (time)) * 1000;
-            var txt = interval >= 0.001 ? '' + Math.round (ms) : ms.toFixed (1);
+            // Sub-second ticks read in milliseconds and gain decimals only as
+            // the tick spacing earns them: never claim precision the interval
+            // does not have, and never go below a microsecond, which is
+            // already finer than one sample at any usual rate.
+            var decimals = Math.ceil (-Math.log (interval) / Math.LN10) - 3;
+            if (decimals < 0) decimals = 0;
+            else if (decimals > 3) decimals = 3;
 
-            if (parseFloat (txt) >= 1000) txt = interval >= 0.001 ? '999' : '999.9';
+            var ms = (time - Math.floor (time)) * 1000;
+            var txt = ms.toFixed (decimals);
+
+            if (parseFloat (txt) >= 1000) txt = (999.999).toFixed (decimals);
 
             var dot = txt.indexOf ('.');
             var ip = dot < 0 ? txt : txt.slice (0, dot);
@@ -1431,7 +1435,6 @@ var MultiCanvas = function (_Drawer) {
                 var durr = ws_.VisibleDuration;
                 var offs = ws_.LeftProgress;
                 var view_w = this.width;
-                var lod_ = this.lod;
 
                 if (durr > 0 && view_w > 0)
                 {
@@ -1446,17 +1449,7 @@ var MultiCanvas = function (_Drawer) {
                     // by what fits on the canvas rather than by the length of
                     // the file. The old bound was total * 10, which gave zero
                     // iterations -- and so no ruler at all -- under 100 ms.
-                    var rate_ = lod_ ? lod_.rate : 0;
-                    var by_sample = !!(lod_ && lod_.points && rate_ > 0);
-
                     var interval = niceTimeInterval (durr * 80 / view_w);
-
-                    if (by_sample) {
-                        // snap to whole samples so the "#n" labels are exact
-                        var per_tick = Math.round (interval * rate_);
-                        if (per_tick < 1) per_tick = 1;
-                        interval = per_tick / rate_;
-                    }
 
                     var max_ticks = Math.ceil (view_w / 40) + 4;
                     var last_t = offs + durr;
@@ -1473,7 +1466,7 @@ var MultiCanvas = function (_Drawer) {
                         px = (tick - offs) / durr * view_w;
                         if (px < -2 || px > view_w + 2) continue;
 
-                        ctx.fillText (rulerLabel (tick, interval, by_sample, rate_), px, 12);
+                        ctx.fillText (rulerLabel (tick, interval), px, 12);
                         ctx.moveTo (px, 16);
                         ctx.lineTo (px, 24);
                     }
@@ -1481,8 +1474,8 @@ var MultiCanvas = function (_Drawer) {
                     // if the nice interval managed to skip the window entirely,
                     // still mark both edges so the ruler is never blank
                     if (drawn === 0) {
-                        ctx.fillText (rulerLabel (offs, interval, by_sample, rate_), 18, 12);
-                        ctx.fillText (rulerLabel (last_t, interval, by_sample, rate_), view_w - 18, 12);
+                        ctx.fillText (rulerLabel (offs, interval), 18, 12);
+                        ctx.fillText (rulerLabel (last_t, interval), view_w - 18, 12);
                         ctx.moveTo (0.5, 16);
                         ctx.lineTo (0.5, 24);
                         ctx.moveTo (view_w - 0.5, 16);
@@ -1607,7 +1600,7 @@ var MultiCanvas = function (_Drawer) {
 
                 // Bar wave draws the bottom only as a reflection of the top,
                 // so we don't need negative values
-                var hasMinVals = [].some.call(peaks, function (val) {
+                var hasMinVals = _this7.lod ? true : [].some.call(peaks, function (val) {
                     return val < 0;
                 });
                 var height = _this7.params.height / 2 * _this7.params.pixelRatio;
@@ -2673,9 +2666,11 @@ var WaveSurfer = function (_util$Observer) {
 
 
             // Smallest viewport every horizontal zoom control will stop at,
-            // measured in PCM samples rather than seconds so that clips
-            // shorter than a second stay zoomable. engine.js reads this too.
-            this.MinVisibleSamples = 2;
+            // counted in PCM sample intervals rather than seconds so that
+            // clips shorter than a second stay zoomable. engine.js reads this
+            // too. The sample renderer draws one guard sample past each edge
+            // to keep its path joined; those do not count towards the limit.
+            this.MinVisibleSamples = 10;
 
             this.MaxZoomFactor = function () {
                 var buf = _this5.backend && _this5.backend.buffer;
@@ -2926,10 +2921,10 @@ var WaveSurfer = function (_util$Observer) {
                 var half = ~~(q.drawer.width / 2);
                 var real = percentage * maxScroll;
                 var target = real - half;
-                var left_middle = q.LeftProgress / durr * maxScroll + half >> 0;
+                var left_middle = Math.floor (q.LeftProgress / durr * maxScroll + half);
                 
                 if (left_middle + half > real && left_middle + half < maxScroll) {
-                    var cursor = (percentage - q.LeftProgress / durr) * q.ZoomFactor * 100 >> 0;
+                    var cursor = Math.floor ((percentage - q.LeftProgress / durr) * q.ZoomFactor * 100);
                     if (cursor > 50) {
                         var x = target - left_middle + half;
                         target -= Math.max(0, x - 4 * q.ZoomFactor / 2);
@@ -2961,12 +2956,12 @@ var WaveSurfer = function (_util$Observer) {
                         var half = ~~(q.drawer.width / 2);
                         var real = percentage * maxScroll;
                         var target = real - half;
-                        var left_middle = q.LeftProgress / durr * maxScroll + half >> 0;
+                        var left_middle = Math.floor (q.LeftProgress / durr * maxScroll + half);
 
                         if (left_middle <= real && real <= left_middle + half)
                         {
                             if (left_middle + half > real && left_middle + half < maxScroll) {
-                                var cursor = (percentage - q.LeftProgress / durr) * q.ZoomFactor * 100 >> 0;
+                                var cursor = Math.floor ((percentage - q.LeftProgress / durr) * q.ZoomFactor * 100);
 
                                 if (cursor > 99)
                                 {
@@ -3332,7 +3327,7 @@ var WaveSurfer = function (_util$Observer) {
             var width = parentWidth;
 
             var start = this.LeftProgress;
-            var end = width * this.ZoomFactor >> 0;
+            var end = Math.max (1, Math.round (width * this.ZoomFactor));
             var peaks = void 0;
             // console.log( width, start, end );
             peaks = this.backend.getPeaks(width, start, end, force);

@@ -1593,12 +1593,27 @@
 		zoom_readout.textContent = 'Visible - (-)   Zoom -';
 		header.appendChild ( zoom_readout );
 
-		// below 1% a plain round() collapses to "Visible 0%", and the zoom
-		// buttons reach ~1 sample per pixel, so keep decimals down there
+		// below 1% a plain round() collapses to "Visible 0%", and deep zoom runs
+		// several orders further still, so keep adding digits rather than
+		// flattening everything onto one fixed label
 		function visiblePct ( pct ) {
 			if (pct >= 1) return Math.round (pct);
 			if (pct >= 0.01) return pct.toFixed (2);
-			return '<0.01';
+			if (pct >= 0.0001) return pct.toFixed (4);
+			return pct.toExponential (1);
+		}
+
+		// UI.formatTime stops at whole milliseconds, so every deep-zoom span
+		// read as 00:00:000. This one is for the readout only; the clock format
+		// used everywhere else stays as it is.
+		function visibleSpan ( secs ) {
+			if (secs >= 0.001) return UI.formatTime (secs);
+			if (secs >= 0.000001) return (secs * 1000).toFixed (3) + ' ms';
+			return (secs * 1000000).toFixed (3) + ' \u00b5s';
+		}
+
+		function groupThousands ( n ) {
+			return ('' + n).replace (/\B(?=(\d{3})+(?!\d))/g, ',');
 		}
 
 		function updateZoomReadout ( zoom ) {
@@ -1615,8 +1630,20 @@
 			var visible_duration = wavesurfer.VisibleDuration;
 			if (!(visible_duration > 0)) visible_duration = duration / factor;
 
-			zoom_readout.textContent = 'Visible ' + visiblePct (100 / factor) + '% (' +
-				UI.formatTime (visible_duration) + ')   Zoom ' + Math.round (factor * 100) + '%';
+			var txt = 'Visible ' + visiblePct (100 / factor) + '% (' +
+				visibleSpan (visible_duration) + ')';
+
+			// once individual samples are being drawn, their count is the number
+			// that actually tells you where you are
+			var buffer = wavesurfer.backend && wavesurfer.backend.buffer;
+			var sample_mode = wavesurfer.computeLod && wavesurfer.drawer &&
+				wavesurfer.computeLod (wavesurfer.drawer.width);
+
+			if (sample_mode && buffer)
+				txt += ' \u00b7 ' + Math.round (visible_duration * buffer.sampleRate) + ' samples';
+
+			zoom_readout.textContent = txt + '   Zoom ' +
+				groupThousands (Math.round (factor * 100)) + '%';
 		}
 
 		UI.listenFor ( 'DidZoom', updateZoomReadout );
