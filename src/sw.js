@@ -1,4 +1,4 @@
-const CACHE_NAME = 'audiomass-production-v64';
+const CACHE_NAME = 'audiomass-lite-v1';
 const assets = [
 	'./',
 	'./manifest.json',
@@ -21,8 +21,7 @@ const assets = [
 	'./rnn_denoise.wasm',
 	'./fonts/icomoon.woff',
 	'./eq.html',
-	'./sp.html',
-	'./mix.html'//, './test.mp3'
+	'./sp.html'//, './test.mp3'
 ];
 
 self.addEventListener( 'install', function ( event ) {

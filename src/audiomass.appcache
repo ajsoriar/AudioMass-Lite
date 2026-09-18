@@ -1,7 +1,7 @@
 CACHE MANIFEST
 # v1 - July 26, 2018
 # v2 - May 25, 2020
-# v6 - multitrack sample cancel refresh
+# v7 - lite: multitrack removed
 
 /index-cache.html
 /manifest.json
@@ -25,7 +25,6 @@ CACHE MANIFEST
 /fonts/icomoon.woff
 /eq.html
 /sp.html
-/mix.html
 /test.mp3
 
 
