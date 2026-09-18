@@ -19,6 +19,9 @@
 	--fg-2:#6a7380;
 	--fg-3:#3a414a;
 
+	/* Base primary UI color */
+	--ui-blue:rgb(0,0,255);
+
 	/* Neon cyan accent */
 	--ac:#5af2ff;
 	--ac-2:#99c2c6;          /* original tint, kept for legacy */
@@ -123,8 +126,8 @@ a{
 .pk_hdr{
 	z-index:7;position:relative;
 	height:26px;padding:0 var(--s2);
-	background:var(--bg-1);
-	border-bottom:1px solid var(--bd);
+	background:var(--ui-blue);
+	border-bottom:0;
 	display:flex;align-items:center;
 }
 
@@ -199,8 +202,8 @@ a{
 	position:relative;z-index:6;
 	min-width:560px;height:48px;
 	padding:var(--s2) 0 var(--s2) 14px;
-	background:var(--bg-1);
-	border-bottom:1px solid var(--bd);
+	background:var(--ui-blue);
+	border-bottom:0;
 	text-rendering:optimizeSpeed;
 	white-space:nowrap;
 }
@@ -422,7 +425,7 @@ a{
 }
 
 /* ---------- Audio view ---------- */
-.pk_av_cont{position:relative;touch-action:none;overscroll-behavior:none}
+.pk_av_cont{position:relative;touch-action:none;overscroll-behavior:none;background:var(--ui-blue)}
 .pk_av{
 	clear:both;width:calc(100% - 64px);margin:0 0 0 48px;
 	position:relative;overflow:hidden;contain:content;
@@ -777,8 +780,8 @@ a{
 /* ---------- Footer ---------- */
 .pk_ftr{
 	padding:6px 14px var(--s2);
-	background:var(--bg-1);
-	border-top:1px solid var(--bd);
+	background:var(--ui-blue);
+	border-top:0;
 	box-shadow:inset 0 1px 0 rgba(255,255,255,.03);
 }
 
