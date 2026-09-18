@@ -176,7 +176,7 @@
 		}
 
 		this.KeyHandler = new app._deps.keyhandler ( this ); // initializing keyhandler
-		this.TopHeader  = new _makeUITopHeader ( _topbarConfig ( app ), this ); // topmost menu
+		this.TopHeader  = new _makeUITopHeader ( _topbarConfig ( app ), this, app ); // topmost menu
 		this.Toolbar    = new _makeUIToolbar ( this ); // main toolbar and controls
 		this.footer     = new _makeUIMainView ( this, app );
 		this.BarBtm     = new _makeUIBarBottom (this, app);
@@ -1515,7 +1515,7 @@
 	// 
 	// TOP-BAR CLASS
 	// 
-	function _makeUITopHeader ( menu_tree, UI ) {
+	function _makeUITopHeader ( menu_tree, UI, app ) {
 		var header = d.createElement ( 'div' );
 		header.className = 'pk_hdr pk_noselect';
 
@@ -1587,6 +1587,43 @@
 			}
 		};
 		build_menus ( header, menu_tree, 0 );
+
+		var zoom_readout = d.createElement ( 'div' );
+		zoom_readout.className = 'pk_hdrinfo';
+		zoom_readout.textContent = 'Visible - (-)   Zoom -';
+		header.appendChild ( zoom_readout );
+
+		// below 1% a plain round() collapses to "Visible 0%", and the zoom
+		// buttons reach ~1 sample per pixel, so keep decimals down there
+		function visiblePct ( pct ) {
+			if (pct >= 1) return Math.round (pct);
+			if (pct >= 0.01) return pct.toFixed (2);
+			return '<0.01';
+		}
+
+		function updateZoomReadout ( zoom ) {
+			var wavesurfer = app.engine && app.engine.wavesurfer;
+			var duration = wavesurfer && wavesurfer.getDuration ? wavesurfer.getDuration () : 0;
+			var factor = zoom && zoom[0];
+
+			if (!(factor > 0) && wavesurfer) factor = wavesurfer.ZoomFactor;
+			if (!(duration > 0) || !(factor > 0)) {
+				zoom_readout.textContent = 'Visible - (-)   Zoom -';
+				return ;
+			}
+
+			var visible_duration = wavesurfer.VisibleDuration;
+			if (!(visible_duration > 0)) visible_duration = duration / factor;
+
+			zoom_readout.textContent = 'Visible ' + visiblePct (100 / factor) + '% (' +
+				UI.formatTime (visible_duration) + ')   Zoom ' + Math.round (factor * 100) + '%';
+		}
+
+		UI.listenFor ( 'DidZoom', updateZoomReadout );
+		UI.listenFor ( 'DidUpdateLen', updateZoomReadout );
+		UI.listenFor ( 'DidUnloadFile', function () {
+			zoom_readout.textContent = 'Visible - (-)   Zoom -';
+		} );
 		
 		this.getOpenElement = function () {
 			return target_el;

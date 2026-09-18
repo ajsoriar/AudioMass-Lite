@@ -130,6 +130,14 @@ a{
 	border-bottom:0;
 	display:flex;align-items:center;
 }
+.pk_hdrinfo{
+	margin-left:auto;
+	color:var(--fg-0);
+	font:11px/1 var(--ff-mono);
+	font-variant-numeric:tabular-nums;
+	white-space:nowrap;
+	user-select:text;
+}
 
 .pk_hdr .pk_btn{
 	float:none;position:relative;
@@ -1499,6 +1507,7 @@ body.pk_stndln{padding-bottom:600px;overflow:hidden}
 }
 
 @media only screen and (max-width:779px){
+	.pk_hdrinfo{display:none}
 	.pk_selection{display:none!important}
 	.pk_mob .pk_selection{
 		float:none;display:inline-flex!important;align-items:center;min-width:0;height:36px;
