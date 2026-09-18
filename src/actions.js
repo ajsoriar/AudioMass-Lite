@@ -160,6 +160,31 @@
 
 
 
+		function CropBuffer ( _offset, _duration ) {
+			var originalBuffer = wavesurfer.backend.buffer;
+
+			var new_len    = ((_duration/1) * originalBuffer.sampleRate) >> 0;
+			var new_offset = ((_offset/1)   * originalBuffer.sampleRate) >> 0;
+
+			var uberSegment = wavesurfer.backend.ac.createBuffer (
+				originalBuffer.numberOfChannels,
+				new_len,
+				originalBuffer.sampleRate
+			);
+
+			for (var i = 0; i < originalBuffer.numberOfChannels; ++i) {
+				uberSegment.getChannelData ( i ).set (
+					originalBuffer.getChannelData ( i ).slice ( new_offset, new_offset + new_len )
+				);
+			}
+
+			loadDecoded ( uberSegment );
+
+			return (uberSegment);
+		};
+
+
+
 		function InsertSegmentToBuffer( _offset, buffer ) {
 			var originalBuffer = wavesurfer.backend.buffer;
 			var uberSegment = wavesurfer.backend.ac.createBuffer(
@@ -2365,6 +2390,7 @@
 		this.Loudness = AnalyzeLoudness;
 
 		this.Trim = TrimBuffer;
+		this.Crop = CropBuffer;
 		this.Copy = CopyBufferSegment;
 		this.Insert = InsertSegmentToBuffer;
 		this.InsertFloatArrays = InsertFloatArrays;
