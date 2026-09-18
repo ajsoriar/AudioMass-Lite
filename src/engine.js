@@ -922,14 +922,10 @@
 
 				input = d.createElement( 'input' );
 				input.setAttribute ('type', 'file');
-				input.setAttribute ('accept', 'audio/*,.amss');
+				input.setAttribute ('accept', 'audio/*');
 				input.className = 'pk_inpfile';
 				input.onchange = function () {
-					if (app.multitrack &&
-						app.multitrack.LoadSessionFiles &&
-						app.multitrack.LoadSessionFiles ( input.files ))
-					{}
-					else if (app.fireEvent ('RequestLoadPickedFiles', input.files) !== true)
+					if (app.fireEvent ('RequestLoadPickedFiles', input.files) !== true)
 						q.LoadFile ( input );
 
 					input.parentNode.removeChild( input );

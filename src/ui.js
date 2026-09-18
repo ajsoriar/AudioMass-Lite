@@ -309,14 +309,6 @@
 											var dither_chk = document.getElementById ('wav-dither');
 											var dither = !!(dither_chk && dither_chk.checked);
 
-											if (format === 'amss')
-											{
-												var mt = activeMultitrackFor ( app );
-												if (mt) mt.ExportSession ( value );
-												q.Destroy ();
-												return ;
-											}
-
 											if (format == 'flac')
 											{
 												kbps = document.getElementById('flac-comp').value / 1;
@@ -339,8 +331,6 @@
 									'<label for="k02">wav <i>(44100hz)</i></label>' +
 									'<input type="radio" class="pk_check" id="k03" name="frmtex" value="flac">'+  
 									'<label for="k03">flac</i></label>' +
-									'<br class="pk_amss"><input type="radio" class="pk_check pk_amss" id="k04" name="frmtex" value="amss">'+
-									'<label class="pk_amss" for="k04">session file (.amss)</label>' +
 									'</div>' +
 
 									'<div class="pk_row" id="frmtex-mp3"><input type="radio" class="pk_check" id="k1" name="rdslnc" checked value="128">'+ 
@@ -412,7 +402,6 @@
 									  		var flacconf = document.getElementById('frmtex-flac');
 												var wavconf = document.getElementById('frmtex-wav');
 												var ditherWrap = document.getElementById('wav-dither-wrap');
-											var amss = q.el_body.getElementsByClassName ('pk_amss');
 											function setDitherFor ( bits ) {
 												var on = bits === 16;
 												document.getElementById('wav-dither').disabled = !on;
@@ -423,23 +412,8 @@
 												flacconf.style.display = f ? 'block' : 'none';
 												wavconf.style.display  = w ? 'block' : 'none';
 											}
-											var k6 = document.getElementById ('k6');
-											var k7 = document.getElementById ('k7');
-											if (!mt_on) {
-												for (var x = 0; x < amss.length; ++x)
-													amss[x].style.display = 'none';
-											}
 											function setExt ( ext ) {
-												inputtxt.value = inputtxt.value.replace (/\.(mp3|wav|flac|amss)$/i, '') + ext;
-											}
-											function chanOff ( off ) {
-												k6.disabled = k7.disabled = !!off;
-											}
-											if (mt_on) {
-												document.getElementById ('k01').checked = true;
-												showConf (1, 0, 0);
-												chanOff ( false );
-												setExt ('.mp3');
+												inputtxt.value = inputtxt.value.replace (/\.(mp3|wav|flac)$/i, '') + ext;
 											}
 
 											document.getElementById('flac-comp').oninput = function() {
@@ -463,7 +437,6 @@
 													if (inputs[i].checked)
 													{
 														var v = inputs[i].value;
-														chanOff (v === 'amss');
 														showConf (v === 'mp3', v === 'flac', v === 'wav');
 														setExt ('.' + v);
 													}
@@ -1389,27 +1362,6 @@
 								if (url !== 'sp') return ;
 
 								var txt = 'Spectrum Analyser';
-								if (val) {
-									obj.innerHTML = txt + ' &#10004;';
-								} else {
-									obj.textContent = txt;
-								}
-							});
-						}
-					},
-
-					{
-						name:'Multitrack Mixer',
-						action: function ( obj ) {
-							var mt = app.multitrack;
-							if (mt && mt.IsOn && !mt.IsOn ()) mt.Toggle ( true );
-							app.fireEvent ('RequestMixerToggle');
-						},
-						setup: function ( obj ) {
-							app.listenFor ('DidToggleFreqAn', function ( url, val ) {
-								if (url !== 'mix') return ;
-
-								var txt = 'Multitrack Mixer';
 								if (val) {
 									obj.innerHTML = txt + ' &#10004;';
 								} else {
@@ -3519,39 +3471,7 @@
 
 		var _appEl = d.getElementById('app');
 
-		_appEl.addEventListener('dragover', function ( e ) {
-			var mt = PKAudioEditor && PKAudioEditor.multitrack;
-			if (mt && mt.IsOn && mt.IsOn ()) {
-				e.preventDefault ();
-			}
-		}, true);
-		_appEl.addEventListener('drop', function ( e ) {
-			var mt = PKAudioEditor && PKAudioEditor.multitrack;
-			if (!mt || !mt.IsOn || !mt.IsOn ()) return ;
-			var t = e.target;
-			while (t && t !== _appEl) {
-				if (t.classList && (
-					t.classList.contains ('pk_mt_lane') ||
-					t.classList.contains ('pk_mt_track')
-				)) return ;
-				t = t.parentNode;
-			}
-			if (!e.dataTransfer || !e.dataTransfer.files || !e.dataTransfer.files.length) return ;
-			e.preventDefault ();
-			e.stopPropagation ();
-			mt.AddFilesAuto ( e.dataTransfer.files );
-		}, true);
-
 		dragNDrop( _appEl, 'pk_overlay', function ( e, name ) {
-			var mt = PKAudioEditor && PKAudioEditor.multitrack;
-			if (mt && mt.IsOn && mt.IsOn ()) return ;
-			if (mt && mt.LoadSessionBuffer) {
-				if (mt.LoadSessionBuffer ( e, name )) return ;
-				if (/\.amss$/i.test (name || '')) {
-					OneUp ('Could not load session', 1400);
-					return ;
-				}
-			}
 			PKAudioEditor.engine.LoadArrayBuffer ( new Blob([e]) );
 		}, 'arrayBuffer' );
 
