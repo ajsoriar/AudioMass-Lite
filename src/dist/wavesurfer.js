@@ -824,6 +824,85 @@ function _inherits(subClass, superClass) { if (typeof superClass !== "function" 
             return formatTime (time, 3) + ':' + ip + (dot < 0 ? '' : txt.slice (dot));
         }
 
+        // The ReCycle-like shading is a local light ramp.  It is deliberately
+        // cached as a 1 x 256 image and scaled into every waveform segment:
+        // the ramp restarts on every half-wave instead of being a gradient
+        // tied to the canvas Y coordinate.
+        var recycleShadeRamp = null;
+        var creativeShadeRamps = {};
+        var recycleShadeStops = [
+            [0.00, [190, 186, 212]], [0.08, [210, 203, 222]],
+            [0.25, [188, 178, 235]], [0.45, [150, 138, 245]],
+            [0.65, [115, 107, 180]], [0.90, [75, 72, 100]],
+            [1.00, [125, 120, 150]]
+        ];
+        function getRecycleShadeRamp () {
+            if (recycleShadeRamp) return recycleShadeRamp;
+
+            var c = document.createElement('canvas');
+            c.width = 1;
+            c.height = 256;
+            var cctx = c.getContext('2d');
+            var y = void 0;
+            var i = void 0;
+
+            for (y = 0; y < c.height; ++y) {
+                var t = y / (c.height - 1);
+                for (i = 0; i < recycleShadeStops.length - 1; ++i) {
+                    if (t <= recycleShadeStops[i + 1][0]) break;
+                }
+                var a = recycleShadeStops[i];
+                var b = recycleShadeStops[i + 1];
+                var p = (t - a[0]) / (b[0] - a[0]);
+                p = p * p * (3 - 2 * p); // smoothstep
+                var rgb = [
+                    Math.round(a[1][0] + (b[1][0] - a[1][0]) * p),
+                    Math.round(a[1][1] + (b[1][1] - a[1][1]) * p),
+                    Math.round(a[1][2] + (b[1][2] - a[1][2]) * p)
+                ];
+                cctx.fillStyle = 'rgb(' + rgb[0] + ',' + rgb[1] + ',' + rgb[2] + ')';
+                cctx.fillRect(0, y, 1, 1);
+            }
+            recycleShadeRamp = c;
+            return c;
+        }
+        function getCreativeShadeRamp ( lighting ) {
+            // Quantising keeps the advanced mode bounded to 25 cached ramps
+            // rather than allocating an image for every waveform column.
+            var key = Math.max(0, Math.min(24, Math.round(lighting * 24)));
+            if (creativeShadeRamps[key]) return creativeShadeRamps[key];
+
+            var c = document.createElement('canvas');
+            c.width = 1;
+            c.height = 256;
+            var cctx = c.getContext('2d');
+            var y = void 0;
+            var i = void 0;
+            var specular = Math.pow(key / 24, 18) * 0.20;
+
+            for (y = 0; y < c.height; ++y) {
+                var t = y / (c.height - 1);
+                for (i = 0; i < recycleShadeStops.length - 1; ++i) {
+                    if (t <= recycleShadeStops[i + 1][0]) break;
+                }
+                var a = recycleShadeStops[i];
+                var b = recycleShadeStops[i + 1];
+                var p = (t - a[0]) / (b[0] - a[0]);
+                p = p * p * (3 - 2 * p);
+                var level = 0.82 + key / 24 * 0.28;
+                var fresnel = Math.pow(Math.abs(t * 2 - 1), 4) * 0.18;
+                var rgb = [0, 1, 2].map(function (channel) {
+                    var base = (a[1][channel] + (b[1][channel] - a[1][channel]) * p) * level;
+                    var rim = [205, 215, 255][channel];
+                    return Math.round(Math.min(255, base + (rim - base) * fresnel + (255 - base) * specular));
+                });
+                cctx.fillStyle = 'rgb(' + rgb[0] + ',' + rgb[1] + ',' + rgb[2] + ')';
+                cctx.fillRect(0, y, 1, 1);
+            }
+            creativeShadeRamps[key] = c;
+            return c;
+        }
+
 var MultiCanvas = function (_Drawer) {
     _inherits(MultiCanvas, _Drawer);
 
@@ -1222,6 +1301,197 @@ var MultiCanvas = function (_Drawer) {
          */
 
     }, {
+        key: 'drawClassicPixel',
+        value: function drawClassicPixel(ctx, entry, peaks, absmax, halfH, offsetY) {
+            var width = ctx.canvas.width;
+            var height = Math.max(1, Math.round(halfH * 2));
+            var image = ctx.createImageData(width, height);
+            var data = image.data;
+            var background = [239, 242, 250, 255];
+            var wave = [95, 95, 220, 255];
+            var zero = [45, 45, 55, 255];
+            var center = Math.floor(height / 2);
+            var amplitude = Math.max(1, center - 1);
+            var peakCount = peaks.length / 2;
+            var x = void 0;
+            var y = void 0;
+
+            // Fully opaque background and integer pixels: no gradients, alpha
+            // edges or canvas path rasterisation in this classic display.
+            for (var p = 0; p < data.length; p += 4) {
+                data[p] = background[0]; data[p + 1] = background[1];
+                data[p + 2] = background[2]; data[p + 3] = background[3];
+            }
+            for (x = 0; x < width; ++x) {
+                var peakIndex = Math.round((entry.start + (entry.end - entry.start) * x / Math.max(1, width - 1)) * (peakCount - 1));
+                if (peakIndex < 0) peakIndex = 0;
+                else if (peakIndex >= peakCount) peakIndex = peakCount - 1;
+                var top = center - Math.round(Math.max(-1, Math.min(1, peaks[2 * peakIndex] / absmax)) * amplitude);
+                var bottom = center - Math.round(Math.max(-1, Math.min(1, peaks[2 * peakIndex + 1] / absmax)) * amplitude);
+                if (bottom < top) { var swap = top; top = bottom; bottom = swap; }
+                if (top < 0) top = 0;
+                if (bottom >= height) bottom = height - 1;
+                for (y = top; y <= bottom; ++y) {
+                    var index = (y * width + x) * 4;
+                    data[index] = wave[0]; data[index + 1] = wave[1];
+                    data[index + 2] = wave[2]; data[index + 3] = wave[3];
+                }
+            }
+            // A crisp zero line is intentionally drawn last in the classic mode.
+            for (x = 0; x < width; ++x) {
+                var zeroIndex = (center * width + x) * 4;
+                data[zeroIndex] = zero[0]; data[zeroIndex + 1] = zero[1];
+                data[zeroIndex + 2] = zero[2]; data[zeroIndex + 3] = zero[3];
+            }
+            ctx.putImageData(image, 0, Math.round(offsetY));
+        }
+    }, {
+        key: 'drawSpectralRibbon',
+        value: function drawSpectralRibbon(ctx, entry, channelIndex, halfH, offsetY, peaks, absmax) {
+            var buffer = this.spectralBuffer;
+            if (!buffer || !buffer.length || !(this.spectralVisible > 0)) return;
+
+            var channel = buffer.getChannelData(Math.min(channelIndex, buffer.numberOfChannels - 1));
+            var rate = buffer.sampleRate;
+            var width = ctx.canvas.width;
+            var columns = Math.max(24, Math.min(360, Math.ceil(width / 4)));
+            var fftSize = 256;
+            var frequencies = [50, 160, 500, 1600, 4500, 11000];
+            var colours = ['#523796', '#6946b9', '#7d5ed2', '#987ce7', '#b5a0f2', '#d9d1ff'];
+            var baseThickness = [1.6, 1.6, 1.4, 1.2, 1, 0.8];
+            var amplitudeScale = [15, 13, 11, 9, 7, 5];
+            var energy = [];
+            var smooth = [0, 0, 0, 0, 0, 0];
+            var startTime = this.spectralLeft + this.spectralVisible * entry.start;
+            var entryDuration = this.spectralVisible * (entry.end - entry.start);
+            var ci = void 0;
+            var band = void 0;
+
+            for (ci = 0; ci < columns; ++ci) {
+                var time = startTime + entryDuration * ci / Math.max(1, columns - 1);
+                var center = Math.round(time * rate);
+                var row = [];
+                for (band = 0; band < frequencies.length; ++band) {
+                    var omega = 2 * Math.PI * Math.min(frequencies[band], rate * 0.45) / rate;
+                    var coeff = 2 * Math.cos(omega);
+                    var q0 = 0, q1 = 0, q2 = 0;
+                    for (var n = 0; n < fftSize; ++n) {
+                        var sampleIndex = center - (fftSize >> 1) + n;
+                        var sample = sampleIndex >= 0 && sampleIndex < channel.length ? channel[sampleIndex] : 0;
+                        sample *= 0.5 - 0.5 * Math.cos(2 * Math.PI * n / (fftSize - 1));
+                        q0 = coeff * q1 - q2 + sample;
+                        q2 = q1;
+                        q1 = q0;
+                    }
+                    var magnitude = Math.sqrt(q1 * q1 + q2 * q2 - coeff * q1 * q2) / fftSize;
+                    var raw = Math.min(1, Math.log(1 + magnitude * 80) / Math.log(81));
+                    smooth[band] = ci ? smooth[band] * 0.65 + raw * 0.35 : raw;
+                    row[band] = smooth[band];
+                }
+                energy.push(row);
+            }
+
+            var base = halfH + offsetY;
+            var xFor = function (index) { return index / Math.max(1, columns - 1) * width; };
+            for (band = 0; band < frequencies.length; ++band) {
+                var topInner = [], topOuter = [], bottomInner = [], bottomOuter = [];
+                for (ci = 0; ci < columns; ++ci) {
+                    // The spectrum supplies the internal ribbon structure, but
+                    // the outer silhouette must remain the real min/max waveform.
+                    // Without this normalization quiet material collapses into a
+                    // decorative line around the centre instead of showing audio.
+                    var peakPosition = Math.round((entry.start + (entry.end - entry.start) * ci / Math.max(1, columns - 1)) * (peaks.length / 2 - 1));
+                    if (peakPosition < 0) peakPosition = 0;
+                    var peakTop = Math.max(0, peaks[2 * peakPosition] / absmax) * halfH;
+                    var peakBottom = Math.max(0, -peaks[2 * peakPosition + 1] / absmax) * halfH;
+                    var rawTotal = 0;
+                    for (var totalBand = 0; totalBand < frequencies.length; ++totalBand)
+                        rawTotal += baseThickness[totalBand] + energy[ci][totalBand] * amplitudeScale[totalBand];
+                    var topCumulative = 0;
+                    var bottomCumulative = 0;
+                    for (var prior = 0; prior < band; ++prior) {
+                        var priorThickness = baseThickness[prior] + energy[ci][prior] * amplitudeScale[prior];
+                        topCumulative += priorThickness * peakTop / rawTotal;
+                        bottomCumulative += priorThickness * peakBottom / rawTotal;
+                    }
+                    var thickness = baseThickness[band] + energy[ci][band] * amplitudeScale[band];
+                    var topThickness = thickness * peakTop / rawTotal;
+                    var bottomThickness = thickness * peakBottom / rawTotal;
+                    topInner[ci] = base - topCumulative;
+                    topOuter[ci] = topInner[ci] - topThickness;
+                    bottomInner[ci] = base + bottomCumulative;
+                    bottomOuter[ci] = bottomInner[ci] + bottomThickness;
+                }
+
+                ctx.save();
+                ctx.globalAlpha = 0.90;
+                ctx.fillStyle = colours[band];
+                ctx.beginPath();
+                ctx.moveTo(xFor(0), topInner[0]);
+                for (ci = 1; ci < columns; ++ci) ctx.lineTo(xFor(ci), topInner[ci]);
+                for (ci = columns - 1; ci >= 0; --ci) ctx.lineTo(xFor(ci), topOuter[ci]);
+                ctx.closePath(); ctx.fill();
+                ctx.beginPath();
+                ctx.moveTo(xFor(0), bottomInner[0]);
+                for (ci = 1; ci < columns; ++ci) ctx.lineTo(xFor(ci), bottomInner[ci]);
+                for (ci = columns - 1; ci >= 0; --ci) ctx.lineTo(xFor(ci), bottomOuter[ci]);
+                ctx.closePath(); ctx.fill();
+                ctx.globalAlpha = 0.18;
+                ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 1;
+                ctx.beginPath();
+                ctx.moveTo(xFor(0), topOuter[0]);
+                for (ci = 1; ci < columns; ++ci) ctx.lineTo(xFor(ci), topOuter[ci]);
+                ctx.moveTo(xFor(0), bottomOuter[0]);
+                for (ci = 1; ci < columns; ++ci) ctx.lineTo(xFor(ci), bottomOuter[ci]);
+                ctx.stroke(); ctx.restore();
+            }
+        }
+    }, {
+        key: 'drawReCycleSegment',
+        value: function drawReCycleSegment(ctx, x, y1, y2, width, darker, lighting) {
+            y1 = Math.round(y1);
+            y2 = Math.round(y2);
+            if (y2 < y1) {
+                var tmp = y1;
+                y1 = y2;
+                y2 = tmp;
+            }
+            var length = Math.max(1, y2 - y1);
+            var ramp = lighting === undefined ? getRecycleShadeRamp() : getCreativeShadeRamp(lighting);
+
+            ctx.save();
+            // The lower half is subtly darker, as if the light comes from above.
+            ctx.globalAlpha = darker ? 0.95 : 1;
+            ctx.drawImage(ramp, 0, 0, 1, 256, Math.round(x), y1, Math.max(1, width), length);
+            ctx.globalAlpha = 1;
+            ctx.fillStyle = 'rgba(230,225,245,0.18)';
+            ctx.fillRect(Math.round(x), y1, Math.max(1, width), 1);
+            ctx.fillStyle = 'rgba(26,23,43,0.16)';
+            ctx.fillRect(Math.round(x), y1 + length - 1, Math.max(1, width), 1);
+            ctx.restore();
+        }
+    }, {
+        key: 'drawReCyclePeaks',
+        value: function drawReCyclePeaks(ctx, peaks, absmax, halfH, offsetY, canvasStart, tempEnd, first, scale, creative) {
+            var base = halfH + offsetY;
+            var width = Math.max(1, Math.ceil(scale));
+            for (var i = canvasStart; i < tempEnd; ++i) {
+                var x = (i - first) * scale + this.halfPixel;
+                var top = base - Math.min(Math.round(peaks[2 * i] / absmax * halfH), halfH);
+                var bottom = base - Math.max(Math.round(peaks[2 * i + 1] / absmax * halfH), -halfH);
+                var lighting = void 0;
+                if (creative) {
+                    var prev = Math.max(Math.abs(peaks[2 * Math.max(canvasStart, i - 1)]), Math.abs(peaks[2 * Math.max(canvasStart, i - 1) + 1])) / absmax;
+                    var next = Math.max(Math.abs(peaks[2 * Math.min(tempEnd - 1, i + 1)]), Math.abs(peaks[2 * Math.min(tempEnd - 1, i + 1) + 1])) / absmax;
+                    var nx = -(next - prev) * 3.0;
+                    var invLength = 1 / Math.sqrt(nx * nx + 1);
+                    lighting = Math.max(0, nx * -0.45 * invLength + 0.90 * invLength);
+                }
+                if (top < base) this.drawReCycleSegment(ctx, x, top, base, width, false, lighting);
+                if (bottom > base) this.drawReCycleSegment(ctx, x, base, bottom, width, true, lighting);
+            }
+        }
+    }, {
         key: 'drawSamplesToContext',
         value: function drawSamplesToContext (entry, ctx, channelIndex, absmax, halfH, offsetY, firstCol, scale) {
             var lod = this.lod;
@@ -1254,6 +1524,27 @@ var MultiCanvas = function (_Drawer) {
             var i = void 0;
             var x = void 0;
             var h = void 0;
+
+            if (this.params.recycleShade || this.params.creativeWave) {
+                var base = halfH + offsetY;
+                for (i = from; i <= to; ++i) {
+                    x = ((i / rate) - left) / visible * total_width - x_offset;
+                    h = chan[i] / absmax * halfH;
+                    if (h > halfH) h = halfH;
+                    else if (h < -halfH) h = -halfH;
+                    var lighting = void 0;
+                    if (this.params.creativeWave) {
+                        var before = Math.abs(chan[Math.max(from, i - 1)] / absmax);
+                        var after = Math.abs(chan[Math.min(to, i + 1)] / absmax);
+                        var nx = -(after - before) * 3.0;
+                        var invLength = 1 / Math.sqrt(nx * nx + 1);
+                        lighting = Math.max(0, nx * -0.45 * invLength + 0.90 * invLength);
+                    }
+                    if (h > 0) this.drawReCycleSegment(ctx, x, base - h, base, 1, false, lighting);
+                    else if (h < 0) this.drawReCycleSegment(ctx, x, base, base - h, 1, true, lighting);
+                }
+                return;
+            }
 
             ctx.save();
             ctx.strokeStyle = color;
@@ -1337,6 +1628,13 @@ var MultiCanvas = function (_Drawer) {
                 (offsetY > 30 ? 1 : 0) :
                 drawChannel;
 
+            var spectralRibbon = this.params.spectralRibbon;
+            var classicPixel = this.params.classicPixel;
+            if (spectralRibbon) {
+                this.drawSpectralRibbon(ctx, entry, chan_index, halfH, offsetY, peaks, absmax);
+            }
+            if (classicPixel) this.drawClassicPixel(ctx, entry, peaks, absmax, halfH, offsetY);
+
             
             //halfH -= 10;
 
@@ -1347,7 +1645,19 @@ var MultiCanvas = function (_Drawer) {
             }
             else
             {
-                ctx.fillStyle = this.params.waveColor;
+                // ReCycle-inspired waveform paint: only the waveform changes.
+                // The canvas is still cleared to its existing black background.
+                if (this.params.waveGradient) {
+                    var waveGradient = ctx.createLinearGradient(0, offsetY, 0, offsetY + halfH * 2);
+                    waveGradient.addColorStop(0, '#f2efff');
+                    waveGradient.addColorStop(0.32, '#c5bcff');
+                    waveGradient.addColorStop(0.5, '#8175ef');
+                    waveGradient.addColorStop(0.72, '#584d9b');
+                    waveGradient.addColorStop(1, '#302a52');
+                    ctx.fillStyle = waveGradient;
+                } else {
+                    ctx.fillStyle = this.params.waveColor;
+                }
             }
 
             //var fastround = function ( num ) {
@@ -1357,7 +1667,8 @@ var MultiCanvas = function (_Drawer) {
             // var foo = Date.now();
 
             if (this.lod) {
-                this.drawSamplesToContext (entry, ctx, chan_index, absmax, halfH, offsetY, first, scale);
+                if (!spectralRibbon && !classicPixel)
+                    this.drawSamplesToContext (entry, ctx, chan_index, absmax, halfH, offsetY, first, scale);
             }
             else {
 
@@ -1367,6 +1678,12 @@ var MultiCanvas = function (_Drawer) {
                 temp_end = (peaks.length / 2) >> 0;
             }
 
+            if (spectralRibbon || classicPixel) {
+                // Already painted above; continue so ruler and limits still render.
+            } else if (this.params.recycleShade || this.params.creativeWave) {
+                this.drawReCyclePeaks(ctx, peaks, absmax, halfH, offsetY,
+                    canvasStart, temp_end, first, scale, this.params.creativeWave);
+            } else {
             for (i = canvasStart; i < temp_end;  ++i) {
                 var peak = peaks[2 * i];
                 var h = Math.round (peak / absmax * halfH);
@@ -1402,6 +1719,8 @@ var MultiCanvas = function (_Drawer) {
 
             ctx.closePath();
             ctx.fill();
+
+            }
 
             }
 
@@ -1652,7 +1971,10 @@ var MultiCanvas = function (_Drawer) {
     }, {
         key: 'setFillStyles',
         value: function setFillStyles(entry) {
-            entry.waveCtx.fillStyle = this.params.waveColor;
+            // fillRect is used for the zero axis after the waveform. Keep it
+            // deliberately dark in the local-shading mode so it remains legible.
+            entry.waveCtx.fillStyle = this.params.recycleShade || this.params.creativeWave || this.params.spectralRibbon || this.params.classicPixel ?
+                'rgba(30,28,40,0.75)' : this.params.waveColor;
             if (this.hasProgressCanvas) {
                 entry.progressCtx.fillStyle = this.params.progressColor;
             }
@@ -3322,6 +3644,10 @@ var WaveSurfer = function (_util$Observer) {
 
             // #### 
             if (this.ZoomFactor === 1) this.VisibleDuration = this.getDuration();else this.VisibleDuration = this.getDuration() / this.ZoomFactor;
+
+            this.drawer.spectralBuffer = this.backend.buffer;
+            this.drawer.spectralLeft = this.LeftProgress;
+            this.drawer.spectralVisible = this.VisibleDuration;
 
             var parentWidth = this.drawer.getWidth();
             var width = parentWidth;

@@ -190,7 +190,10 @@ a{
 /* ---------- Toolbar ---------- */
 .pk_tbc{
 	position:relative;
-	overflow:visible;
+	overflow-x:auto;
+	overflow-y:hidden;
+	background:var(--ui-blue);
+	border-bottom:1px solid var(--bd);
 	-webkit-overflow-scrolling:touch;
 	scrollbar-width:none;
 }
@@ -208,16 +211,16 @@ a{
 }
 .pk_tb{
 	position:relative;z-index:6;
-	min-width:560px;height:48px;
-	padding:var(--s2) 0 var(--s2) 14px;
+	display:inline-block;width:max-content;min-width:calc(100% - 48px);height:48px;
+	padding:6px 0 6px 48px;
 	background:var(--ui-blue);
-	border-bottom:0;
+	border-bottom:none;
 	text-rendering:optimizeSpeed;
 	white-space:nowrap;
 }
 .pk_mt_on .pk_tbc{
 	overflow-x:scroll;overflow-y:hidden;
-	background:var(--bg-1);
+	background:var(--ui-blue);
 	border-bottom:1px solid var(--bd);
 }
 .pk_mt_on .pk_tb{
@@ -364,6 +367,36 @@ a{
 }
 .pk_tb .pk_btn:not(.pk_act):hover{background:var(--ac-soft);color:var(--ac);box-shadow:0 0 0 1px var(--bd-h)}
 .pk_tb .pk_btn:active{background:var(--bg-0);box-shadow:inset 0 0 10px rgba(0,0,0,.6)}
+.pk_wavepalette{
+	display:inline-block;vertical-align:top;margin:0 5px;
+	border-left:1px solid var(--bd);border-right:1px solid var(--bd);
+}
+.pk_tb .pk_wavepalette_btn{
+	font-family:var(--ff-mono);font-size:14px;font-weight:bold;color:#c5bcff;
+}
+.pk_tb .pk_wavepalette_btn.pk_act{
+	color:#fff;background:linear-gradient(180deg,#eeeaff 0%,#8175ef 52%,#40376e 100%);
+	box-shadow:0 0 10px rgba(154,140,255,.72);
+}
+.pk_tb .pk_recycleshade_btn{font-family:var(--ff-mono);font-size:14px;font-weight:bold;color:#aeb7ff}
+.pk_tb .pk_recycleshade_btn.pk_act{
+	color:#fff;background:linear-gradient(180deg,#d2cbe0 0%,#968af5 45%,#4b4864 90%,#7d7896 100%);
+	box-shadow:0 0 10px rgba(145,134,245,.76);
+}
+.pk_tb .pk_creativewave_btn{font-family:var(--ff-mono);font-size:14px;font-weight:bold;color:#b8c9ff}
+.pk_tb .pk_creativewave_btn.pk_act{
+	color:#fff;background:linear-gradient(180deg,#f5f3ff 0%,#b2b6ff 25%,#7669ca 58%,#29263f 100%);
+	box-shadow:0 0 12px rgba(176,190,255,.82);
+}
+.pk_tb .pk_spectralribbon_btn{font-family:var(--ff-mono);font-size:14px;font-weight:bold;color:#d6c5ff}
+.pk_tb .pk_spectralribbon_btn.pk_act{
+	color:#fff;background:linear-gradient(135deg,#523796 0%,#7d5ed2 38%,#b5a0f2 70%,#d9d1ff 100%);
+	box-shadow:0 0 12px rgba(181,160,242,.82);
+}
+.pk_tb .pk_classicpixel_btn{font-family:var(--ff-mono);font-size:14px;font-weight:bold;color:#a4a8d8}
+.pk_tb .pk_classicpixel_btn.pk_act{
+	color:#fff;background:#5f5fdc;box-shadow:0 0 10px rgba(95,95,220,.80);
+}
 
 /* Tooltip (pk_btn span) */
 .pk_ftr .pk_btn span,

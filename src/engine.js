@@ -9,6 +9,11 @@
 			if (av) h -= av.offsetHeight - av.clientHeight;
 			return Math.max (1, h);
 		}
+		var savedWaveMode = w.localStorage && w.localStorage.pk_classicpixel === '1' ? 'classicPixel' :
+			w.localStorage && w.localStorage.pk_spectralribbon === '1' ? 'spectralRibbon' :
+			w.localStorage && w.localStorage.pk_creativewave === '1' ? 'creativeWave' :
+			w.localStorage && w.localStorage.pk_recycleshade === '1' ? 'recycleShade' :
+			w.localStorage && w.localStorage.pk_wavegradient === '1' ? 'waveGradient' : '';
 
 		var wavesurfer = WaveSurfer.create ({
 			container: '#' + 'pk_av_' + app.id,
@@ -17,6 +22,14 @@
 			partialRender:false,
 			fillParent:false,
 			pixelRatio:1,
+			// The alternate palette changes only the waveform paint.  Keeping the
+			// choice here means the drawer can redraw it without changing the UI
+			// or the black waveform canvas behind it.
+			waveGradient: savedWaveMode === 'waveGradient',
+			recycleShade: savedWaveMode === 'recycleShade',
+			creativeWave: savedWaveMode === 'creativeWave',
+			spectralRibbon: savedWaveMode === 'spectralRibbon',
+			classicPixel: savedWaveMode === 'classicPixel',
 			progressColor:'rgba(128,85,85,0.24)',
 			splitChannels:true,
 			autoCenter:true,
