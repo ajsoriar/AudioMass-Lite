@@ -35,6 +35,8 @@
 		this.FXPreviewHost = AudioUtils;
 		q.is_ready = false;
 		var snap_sel = !w.localStorage || w.localStorage.pk_snapzc !== '0';
+		// how far, in canvas pixels, a zero-cross snap may pull an endpoint
+		var SNAP_SEARCH_PIXELS = 4;
 		var loadableAudioExtensions = /\.(aac|aif|aiff|flac|m4a|mp3|oga|ogg|opus|wav|wave|webm)$/i;
 		function isLoadableAudioFile ( file ) {
 			var type = (file.type || '').toLowerCase ();
@@ -48,7 +50,8 @@
 			return ((val *dec) >> 0) / dec;
 		}
 
-		this.ZeroCrossTime = function ( b, t, c ) {
+		// max_samples, when given, caps how far the search may travel
+		this.ZeroCrossTime = function ( b, t, c, max_samples ) {
 			if (!b) return t;
 			if (t <= 0 || t >= b.duration) return Math.max (0, Math.min (b.duration, t));
 			c = c || 0;
@@ -56,6 +59,7 @@
 			var d = b.getChannelData ( c );
 			var i = Math.max (1, Math.min (d.length - 1, (t * r) >> 0));
 			var m = Math.min ((r / 125) >> 0, i, d.length - i - 1);
+			if (max_samples > 0 && m > max_samples) m = max_samples;
 			for (var j = 0; j <= m; ++j) {
 				var k = i - j;
 				if (d[k] === 0 || d[k - 1] < 0 && d[k] > 0 || d[k - 1] > 0 && d[k] < 0) return k / r;
@@ -65,11 +69,31 @@
 			return t;
 		};
 
+		// The zero-cross search reaches up to sampleRate/125 samples, roughly
+		// 8 ms. That is invisible when a pixel covers many samples, but at
+		// sample-level zoom the whole viewport is a fraction of a millisecond,
+		// so the same snap throws the endpoint dozens of viewports away from
+		// the pointer. Keep the snap inside what is actually on screen.
 		function snapTime ( t ) {
 			var b = wavesurfer.backend && wavesurfer.backend.buffer;
+			if (!b) return t;
+			if (t <= 0 || t >= b.duration) return Math.max (0, Math.min (b.duration, t));
+
 			var c = 0;
-			while (b && c < b.numberOfChannels - 1 && wavesurfer.ActiveChannels && !wavesurfer.ActiveChannels[c]) ++c;
-			return q.ZeroCrossTime ( b, t, c );
+			while (c < b.numberOfChannels - 1 && wavesurfer.ActiveChannels && !wavesurfer.ActiveChannels[c]) ++c;
+
+			var width = wavesurfer.drawer && wavesurfer.drawer.width;
+			var visible = wavesurfer.VisibleDuration || wavesurfer.getDuration ();
+			var per_pixel = width > 0 && visible > 0 ? (visible * b.sampleRate) / width : 0;
+
+			// individual samples are on screen, so land on one: hunting for a
+			// crossing here would only move the endpoint off the sample the
+			// pointer is sitting on
+			if (per_pixel > 0 && per_pixel <= 1)
+				return Math.round (t * b.sampleRate) / b.sampleRate;
+
+			return q.ZeroCrossTime ( b, t, c,
+				per_pixel > 0 ? Math.max (1, Math.round (per_pixel * SNAP_SEARCH_PIXELS)) : 0 );
 		}
 		wavesurfer.SnapTime = snap_sel ? snapTime : null;
 
@@ -1215,6 +1239,10 @@
 			var start = q.TrimTo (region.start, 3);
 			var end = q.TrimTo ( (region.end - region.start), 3)
 
+			// a selection shorter than the millisecond this is rounded to leaves
+			// nothing to remove, and a zero length buffer cannot be created
+			if (!(end > 0)) return (false);
+
 			app.fireEvent ('StateRequestPush', {
 				desc : use_clipboard ? 'Cut' : 'Delete',
 				meta : [ start, end ],
@@ -1304,6 +1332,9 @@
 
 			var start = q.TrimTo (region.start, 3);
 			var end = q.TrimTo ((region.end - region.start), 3);
+
+			// nothing to copy once the selection rounds away to nothing
+			if (!(end > 0)) return (false);
 
 			var copybuffer = AudioUtils.Copy (
 				start,
