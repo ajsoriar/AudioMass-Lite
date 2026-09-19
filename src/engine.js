@@ -3682,6 +3682,22 @@
 				return Math.max (0, Math.min (1, where));
 			}
 
+			// Any edit that changes the buffer length leaves the viewport
+			// describing audio that may no longer be there: ZoomFactor is a
+			// multiple of the file length and LeftProgress is an absolute offset
+			// in seconds. Cut, Paste, Insert Silence and undo/redo all reach this
+			// through loadDecoded.
+			//
+			// Clamp rather than reset. Cut and Paste should leave you looking
+			// where you were, only inside a valid range; Trim resets explicitly
+			// afterwards because there the file has become the selection.
+			app.listenFor ('DidUpdateLen', function () {
+				if (!q.is_ready) return ;
+
+				if (clampHorizontalViewport ( wavesurfer.ZoomFactor, wavesurfer.LeftProgress, 0 ))
+					queueViewportDraw ();
+			});
+
 			function zoomAt ( factor, where ) {
 				if (!q.is_ready) return ;
 
