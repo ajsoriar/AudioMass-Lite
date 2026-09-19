@@ -38,7 +38,7 @@
 			var originalBuffer = wavesurfer.backend.buffer;
 			var emptySegment = wavesurfer.backend.ac.createBuffer(
 				originalBuffer.numberOfChannels,
-				_duration * originalBuffer.sampleRate,
+				Math.round (_duration * originalBuffer.sampleRate),
 				originalBuffer.sampleRate
 			);
 
@@ -49,8 +49,8 @@
 		function CopyBufferSegment( _offset, _duration ) {
 			var originalBuffer = wavesurfer.backend.buffer;
 
-			var new_len    = ((_duration/1) * originalBuffer.sampleRate) >> 0;
-			var new_offset = ((_offset/1)   * originalBuffer.sampleRate) >> 0;
+			var new_len    = Math.round ((_duration/1) * originalBuffer.sampleRate);
+			var new_offset = Math.round ((_offset/1)   * originalBuffer.sampleRate);
 
 			var emptySegment = wavesurfer.backend.ac.createBuffer (
 				wavesurfer.SelectedChannelsLen,
@@ -79,8 +79,8 @@
 		function TrimBuffer( _offset, _duration, force ) {
 			var originalBuffer = wavesurfer.backend.buffer;
 
-			var new_len    = ((_duration/1) * originalBuffer.sampleRate) >> 0;
-			var new_offset = ((_offset/1)   * originalBuffer.sampleRate) >> 0;
+			var new_len    = Math.round ((_duration/1) * originalBuffer.sampleRate);
+			var new_offset = Math.round ((_offset/1)   * originalBuffer.sampleRate);
 
 			var emptySegment = wavesurfer.backend.ac.createBuffer (
 				!force ? wavesurfer.SelectedChannelsLen : originalBuffer.numberOfChannels,
@@ -163,8 +163,8 @@
 		function CropBuffer ( _offset, _duration ) {
 			var originalBuffer = wavesurfer.backend.buffer;
 
-			var new_len    = ((_duration/1) * originalBuffer.sampleRate) >> 0;
-			var new_offset = ((_offset/1)   * originalBuffer.sampleRate) >> 0;
+			var new_len    = Math.round ((_duration/1) * originalBuffer.sampleRate);
+			var new_offset = Math.round ((_offset/1)   * originalBuffer.sampleRate);
 
 			var uberSegment = wavesurfer.backend.ac.createBuffer (
 				originalBuffer.numberOfChannels,
@@ -193,7 +193,7 @@
 				originalBuffer.sampleRate
 			);
 
-			_offset = ((_offset / 1) * originalBuffer.sampleRate) >> 0;
+			_offset = Math.round ((_offset / 1) * originalBuffer.sampleRate);
 
 			for (var i = 0; i < originalBuffer.numberOfChannels; ++i) {
 
@@ -257,7 +257,7 @@
 			var new_len = (arr_samples * arr_len);
 			var buff_len = originalBuffer.length;
 
-			_offset = ((_offset / 1) * originalBuffer.sampleRate) >> 0;
+			_offset = Math.round ((_offset / 1) * originalBuffer.sampleRate);
 
 			if (buff_len < (_offset + new_len)) {
 				buff_len = (_offset + new_len);
@@ -311,7 +311,7 @@
 
 			var new_len = (arr_samples * arr_len);
 
-			_offset = ((_offset / 1) * originalBuffer.sampleRate) >> 0;
+			_offset = Math.round ((_offset / 1) * originalBuffer.sampleRate);
 
 			var uberSegment = wavesurfer.backend.ac.createBuffer(
 				originalBuffer.numberOfChannels,
@@ -696,7 +696,7 @@
 				_duration  = wavesurfer.getDuration ();
 
 			var fx_buffer = CopyBufferSegment ( _offset, _duration );
-			var new_offset = ((_offset/1)   * orig_buffer.sampleRate) >> 0;
+			var new_offset = Math.round ((_offset/1)   * orig_buffer.sampleRate);
 
 			var audio_ctx = getOfflineAudioContext (
 					wavesurfer.SelectedChannelsLen, // orig_buffer.numberOfChannels,

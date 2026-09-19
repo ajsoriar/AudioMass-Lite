@@ -44,6 +44,39 @@
 			return loadableAudioExtensions.test (file.name || '');
 		}
 
+		// An editable selection is a range of whole samples. Region times arrive
+		// from the pointer as floats, so round them onto the sample grid once,
+		// here, and let every consumer share the same two frames. Seconds are
+		// handed back as well, since that is what Web Audio and the UI take.
+		//
+		// This replaced TrimTo (region.start, 3) at the call sites: truncating
+		// to milliseconds discarded up to 44 samples at 44.1 kHz and flattened
+		// any selection shorter than a millisecond to nothing.
+		this.RegionSampleBounds = function ( region ) {
+			var b = wavesurfer.backend && wavesurfer.backend.buffer;
+			var r = b && b.sampleRate;
+
+			if (!region || !(r > 0))
+				return { startSample : 0, endSample : 0, start : 0, duration : 0 };
+
+			var n = b.length;
+			var s = Math.round (region.start * r);
+			var e = Math.round (region.end * r);
+
+			if (!(s > 0)) s = 0;
+			else if (s > n) s = n;
+
+			if (!(e > s)) e = s;
+			else if (e > n) e = n;
+
+			return {
+				startSample : s,
+				endSample   : e,
+				start       : s / r,
+				duration    : (e - s) / r
+			};
+		};
+
 		this.TrimTo = function( val, num ) {
 			var nums = {'0':1, '1':10, '2':100,'3':1000,'4':10000,'5':100000};
 			var dec = nums[num];
@@ -104,7 +137,9 @@
 			var region = wavesurfer.regions && wavesurfer.regions.list[0];
 			var state = {
 				desc : desc || 'Open Audio',
-				meta : region ? [ q.TrimTo (region.start, 3), q.TrimTo (region.end - region.start, 3) ] : [ q.TrimTo (wavesurfer.getCurrentTime (), 3) ],
+				meta : region ?
+					[ q.RegionSampleBounds (region).start, q.RegionSampleBounds (region).duration ] :
+					[ q.TrimTo (wavesurfer.getCurrentTime (), 3) ],
 				data : buffer
 			};
 			if (cb) state.cb = cb;
@@ -1102,8 +1137,9 @@
 			var region = wavesurfer.regions.list[0];
 			if (!region) return (false);
 
-			var start = q.TrimTo (region.start, 3);
-			var end = q.TrimTo ((region.end - region.start), 3);
+			var rb = q.RegionSampleBounds (region);
+			var start = rb.start;
+			var end = rb.duration;
 
 			var copybuffer = AudioUtils.Copy (
 				start,
@@ -1236,8 +1272,9 @@
 
 			app.fireEvent ('RequestPause');
 
-			var start = q.TrimTo (region.start, 3);
-			var end = q.TrimTo ( (region.end - region.start), 3)
+			var rb = q.RegionSampleBounds (region);
+			var start = rb.start;
+			var end = rb.duration;
 
 			// a selection shorter than the millisecond this is rounded to leaves
 			// nothing to remove, and a zero length buffer cannot be created
@@ -1287,8 +1324,9 @@
 			var region = wavesurfer.regions.list[0];
 			if (!region) return (false);
 
-			var start = q.TrimTo (region.start, 3);
-			var end = q.TrimTo ((region.end - region.start), 3);
+			var rb = q.RegionSampleBounds (region);
+			var start = rb.start;
+			var end = rb.duration;
 
 			if (end <= 0) return (false);
 
@@ -1330,8 +1368,9 @@
 
 			app.fireEvent('RequestPause');
 
-			var start = q.TrimTo (region.start, 3);
-			var end = q.TrimTo ((region.end - region.start), 3);
+			var rb = q.RegionSampleBounds (region);
+			var start = rb.start;
+			var end = rb.duration;
 
 			// nothing to copy once the selection rounds away to nothing
 			if (!(end > 0)) return (false);
@@ -1412,8 +1451,9 @@
 				dims = AudioUtils.Insert ( offset, copy_buffer );
 			}
 			else {
-				var start = q.TrimTo (region.start, 3);
-				var end = q.TrimTo ((region.end - region.start), 3);
+				var rb = q.RegionSampleBounds (region);
+				var start = rb.start;
+				var end = rb.duration;
 
 				handleStateInline ( start, end );
 
@@ -1552,8 +1592,9 @@
 				region = wavesurfer.regions.list[0];
 			}
 
-			var start = q.TrimTo (region.start, 3);
-			var end = q.TrimTo ((region.end - region.start), 3);
+			var rb = q.RegionSampleBounds (region);
+			var start = rb.start;
+			var end = rb.duration;
 
 			AudioUtils.FXPreview( start, end, AudioUtils.FXBank.HardLimit ( val ) );
 			app.fireEvent ('DidStartPreview');
@@ -1583,8 +1624,9 @@
 				region = wavesurfer.regions.list[0];
 			}
 
-			var start = q.TrimTo (region.start, 3);
-			var end = q.TrimTo ((region.end - region.start), 3);
+			var rb = q.RegionSampleBounds (region);
+			var start = rb.start;
+			var end = rb.duration;
 
 			handleStateInline ( start, end );
 			AudioUtils.FX( start, end, AudioUtils.FXBank.HardLimit ( val ) );
@@ -1617,8 +1659,9 @@
 				region = wavesurfer.regions.list[0];
 			}
 
-			var start = q.TrimTo (region.start, 3);
-			var end = q.TrimTo ((region.end - region.start), 3);
+			var rb = q.RegionSampleBounds (region);
+			var start = rb.start;
+			var end = rb.duration;
 
 			handleStateInline ( start, end );
 			AudioUtils.FX( start, end, AudioUtils.FXBank.ParametricEQ ( val ) );
@@ -1645,8 +1688,9 @@
 				region = wavesurfer.regions.list[0];
 			}
 
-			var start = q.TrimTo (region.start, 3);
-			var end = q.TrimTo ((region.end - region.start), 3);
+			var rb = q.RegionSampleBounds (region);
+			var start = rb.start;
+			var end = rb.duration;
 
 			AudioUtils.FXPreview( start, end, AudioUtils.FXBank.ParametricEQ ( val ) );
 			app.fireEvent ('DidStartPreview');
@@ -1672,8 +1716,9 @@
 				region = wavesurfer.regions.list[0];
 			}
 
-			var start = q.TrimTo (region.start, 3);
-			var end = q.TrimTo ((region.end - region.start), 3);
+			var rb = q.RegionSampleBounds (region);
+			var start = rb.start;
+			var end = rb.duration;
 
 			AudioUtils.FXPreview( start, end, AudioUtils.FXBank.Distortion ( val ) );
 			app.fireEvent ('DidStartPreview');
@@ -1703,8 +1748,9 @@
 				region = wavesurfer.regions.list[0];
 			}
 
-			var start = q.TrimTo (region.start, 3);
-			var end = q.TrimTo ((region.end - region.start), 3);
+			var rb = q.RegionSampleBounds (region);
+			var start = rb.start;
+			var end = rb.duration;
 
 			handleStateInline ( start, end );
 			AudioUtils.FX( start, end, AudioUtils.FXBank.Distortion ( val ) );
@@ -1732,8 +1778,9 @@
 				region = wavesurfer.regions.list[0];
 			}
 
-			var start = q.TrimTo (region.start, 3);
-			var end = q.TrimTo ((region.end - region.start), 3);
+			var rb = q.RegionSampleBounds (region);
+			var start = rb.start;
+			var end = rb.duration;
 
 			AudioUtils.FXPreview( start, end, AudioUtils.FXBank.Delay ( val ) );
 			app.fireEvent ('DidStartPreview');
@@ -1763,8 +1810,9 @@
 				region = wavesurfer.regions.list[0];
 			}
 
-			var start = q.TrimTo (region.start, 3);
-			var end = q.TrimTo ((region.end - region.start), 3);
+			var rb = q.RegionSampleBounds (region);
+			var start = rb.start;
+			var end = rb.duration;
 
 			handleStateInline ( start, end );
 			AudioUtils.FX( start, end, AudioUtils.FXBank.Delay ( val ) );
@@ -1792,8 +1840,9 @@
 				region = wavesurfer.regions.list[0];
 			}
 
-			var start = q.TrimTo (region.start, 3);
-			var end = q.TrimTo ((region.end - region.start), 3);
+			var rb = q.RegionSampleBounds (region);
+			var start = rb.start;
+			var end = rb.duration;
 
 			AudioUtils.FXPreview( start, end, AudioUtils.FXBank.Reverb ( val ) );
 			app.fireEvent ('DidStartPreview');
@@ -1823,8 +1872,9 @@
 				region = wavesurfer.regions.list[0];
 			}
 
-			var start = q.TrimTo (region.start, 3);
-			var end = q.TrimTo ((region.end - region.start), 3);
+			var rb = q.RegionSampleBounds (region);
+			var start = rb.start;
+			var end = rb.duration;
 
 			handleStateInline ( start, end );
 			AudioUtils.FX( start, end, AudioUtils.FXBank.Reverb ( val ) );
@@ -1852,8 +1902,9 @@
 				region = wavesurfer.regions.list[0];
 			}
 
-			var start = q.TrimTo (region.start, 3);
-			var end = q.TrimTo ((region.end - region.start), 3);
+			var rb = q.RegionSampleBounds (region);
+			var start = rb.start;
+			var end = rb.duration;
 
 			AudioUtils.FXPreview( start, end, AudioUtils.FXBank.Compressor ( val ) );
 			app.fireEvent ('DidStartPreview');
@@ -1884,8 +1935,9 @@
 				region = wavesurfer.regions.list[0];
 			}
 
-			var start = q.TrimTo (region.start, 3);
-			var end = q.TrimTo ((region.end - region.start), 3);
+			var rb = q.RegionSampleBounds (region);
+			var start = rb.start;
+			var end = rb.duration;
 
 			handleStateInline ( start, end );
 			AudioUtils.FX( start, end, AudioUtils.FXBank.Compressor ( val ) );
@@ -1911,8 +1963,9 @@
 				region = wavesurfer.regions.list[0];
 			}
 
-			var start = q.TrimTo (region.start, 3);
-			var end = q.TrimTo ((region.end - region.start), 3);
+			var rb = q.RegionSampleBounds (region);
+			var start = rb.start;
+			var end = rb.duration;
 
 			AudioUtils.FXPreview( start, end, fx ( val ) );
 			app.fireEvent ('DidStartPreview');
@@ -1951,8 +2004,9 @@
 				region = wavesurfer.regions.list[0];
 			}
 
-			var start = q.TrimTo (region.start, 3)
-			var end = q.TrimTo ((region.end - region.start), 3)
+			var rb = q.RegionSampleBounds (region);
+			var start = rb.start;
+			var end = rb.duration;
 
 			handleStateInline ( start, end );
 			AudioUtils.FX( start, end, AudioUtils.FXBank.Normalize ( val ) );
@@ -1976,8 +2030,9 @@
 				region = wavesurfer.regions.list[0];
 			}
 
-			var start = q.TrimTo (region.start, 3);
-			var end = q.TrimTo ((region.end - region.start), 3);
+			var rb = q.RegionSampleBounds (region);
+			var start = rb.start;
+			var end = rb.duration;
 
 			done && done (AudioUtils.Loudness (start, end));
 		});
@@ -2005,8 +2060,9 @@
 				region = wavesurfer.regions.list[0];
 			}
 
-			var start = q.TrimTo (region.start, 3);
-			var end = q.TrimTo ((region.end - region.start), 3);
+			var rb = q.RegionSampleBounds (region);
+			var start = rb.start;
+			var end = rb.duration;
 
 			handleStateInline ( start, end );
 			AudioUtils.FX( start, end, AudioUtils.FXBank.NormalizeRMS ( val ) );
@@ -2037,8 +2093,9 @@
 				region = wavesurfer.regions.list[0];
 			}
 
-			var start = q.TrimTo (region.start, 3);
-			var end = q.TrimTo ((region.end - region.start), 3);
+			var rb = q.RegionSampleBounds (region);
+			var start = rb.start;
+			var end = rb.duration;
 
 			handleStateInline ( start, end );
 			AudioUtils.FX( start, end, AudioUtils.FXBank.NormalizeLUFS ( val ) );
@@ -2071,8 +2128,9 @@
 				region = wavesurfer.regions.list[0];
 			}
 
-			var start = q.TrimTo (region.start, 3)
-			var end = q.TrimTo ((region.end - region.start), 3);
+			var rb = q.RegionSampleBounds (region);
+			var start = rb.start;
+			var end = rb.duration;
 
 			handleStateInline ( start, end );
 			AudioUtils.FX( start, end, AudioUtils.FXBank.Invert() );
@@ -2104,8 +2162,9 @@
 				region = wavesurfer.regions.list[0];
 			}
 
-			var start = q.TrimTo (region.start, 3)
-			var end = q.TrimTo ((region.end - region.start), 3);
+			var rb = q.RegionSampleBounds (region);
+			var start = rb.start;
+			var end = rb.duration;
 
 			handleStateInline ( start, end );
 
@@ -2550,8 +2609,9 @@
 				wavesurfer.regions.add ({start:0, end:wavesurfer.getDuration (), id:'t'});
 				region = wavesurfer.regions.list[0];
 			}
-			var start = q.TrimTo (region.start, 3);
-			var end   = q.TrimTo (region.end - region.start, 3);
+			var rb = q.RegionSampleBounds (region);
+			var start = rb.start;
+			var end   = rb.duration;
 			var sr    = wavesurfer.backend.buffer.sampleRate;
 			if (end * sr < 256) return OneUp ('Selection too short', 1200);
 			var freq  = resolveHumFreq (mode, start, end, sr);
@@ -2571,8 +2631,9 @@
 				wavesurfer.regions.add ({start:0, end:wavesurfer.getDuration (), id:'t'});
 				region = wavesurfer.regions.list[0];
 			}
-			var start = q.TrimTo (region.start, 3);
-			var len   = q.TrimTo (region.end - region.start, 3);
+			var rb = q.RegionSampleBounds (region);
+			var start = rb.start;
+			var len   = rb.duration;
 			var sr    = wavesurfer.backend.buffer.sampleRate;
 			if (len * sr < 256) return OneUp ('Selection too short', 1200);
 			var seg = AudioUtils.Copy (start, len);
@@ -2590,8 +2651,9 @@
 				wavesurfer.regions.add ({start:0, end:wavesurfer.getDuration (), id:'t'});
 				region = wavesurfer.regions.list[0];
 			}
-			var start = q.TrimTo (region.start, 3);
-			var end   = q.TrimTo (region.end - region.start, 3);
+			var rb = q.RegionSampleBounds (region);
+			var start = rb.start;
+			var end   = rb.duration;
 			var sr    = wavesurfer.backend.buffer.sampleRate;
 			if (end * sr < 256) return OneUp ('Selection too short', 1200);
 			var freq  = resolveHumFreq (mode, start, end, sr);
@@ -2614,8 +2676,9 @@
 				wavesurfer.regions.add ({start:0, end:wavesurfer.getDuration (), id:'t'});
 				region = wavesurfer.regions.list[0];
 			}
-			var start = q.TrimTo (region.start, 3);
-			var len   = q.TrimTo (region.end - region.start, 3);
+			var rb = q.RegionSampleBounds (region);
+			var start = rb.start;
+			var len   = rb.duration;
 			var sr    = wavesurfer.backend.buffer.sampleRate;
 			if (len * sr < 256) return OneUp ('Selection too short', 1200);
 
@@ -2649,8 +2712,9 @@
 				wavesurfer.regions.add ({start:0, end:wavesurfer.getDuration (), id:'t'});
 				region = wavesurfer.regions.list[0];
 			}
-			var start = q.TrimTo (region.start, 3);
-			var len   = q.TrimTo (region.end - region.start, 3);
+			var rb = q.RegionSampleBounds (region);
+			var start = rb.start;
+			var len   = rb.duration;
 			var sr    = wavesurfer.backend.buffer.sampleRate;
 			if (len * sr < 512) return OneUp ('Selection too short', 1200);
 			var seg = AudioUtils.Copy (start, len);
@@ -2668,8 +2732,9 @@
 				wavesurfer.regions.add ({start:0, end:wavesurfer.getDuration (), id:'t'});
 				region = wavesurfer.regions.list[0];
 			}
-			var start = q.TrimTo (region.start, 3);
-			var len   = q.TrimTo (region.end - region.start, 3);
+			var rb = q.RegionSampleBounds (region);
+			var start = rb.start;
+			var len   = rb.duration;
 			var sr    = wavesurfer.backend.buffer.sampleRate;
 			if (len * sr < 512) return OneUp ('Selection too short', 1200);
 
@@ -2716,8 +2781,9 @@
 				region = wavesurfer.regions.list[0];
 			}
 
-			var start = q.TrimTo (region.start, 3)
-			var end = q.TrimTo ((region.end - region.start), 3);
+			var rb = q.RegionSampleBounds (region);
+			var start = rb.start;
+			var end = rb.duration;
 
 			handleStateInline ( start, end );
 			AudioUtils.FX( start, end, AudioUtils.FXBank.Reverse() );
@@ -2798,8 +2864,9 @@
 				region = wavesurfer.regions.list[0];
 			}
 
-			var start = q.TrimTo (region.start, 3);
-			var end = q.TrimTo ((region.end - region.start), 3);
+			var rb = q.RegionSampleBounds (region);
+			var start = rb.start;
+			var end = rb.duration;
 
 			handleStateInline ( start, end );
 			AudioUtils.FX( start, end, AudioUtils.FXBank.FadeIn() );
@@ -2831,8 +2898,9 @@
 				region = wavesurfer.regions.list[0];
 			}
 
-			var start = q.TrimTo (region.start, 3);
-			var end = q.TrimTo ((region.end - region.start), 3);
+			var rb = q.RegionSampleBounds (region);
+			var start = rb.start;
+			var end = rb.duration;
 
 			handleStateInline ( start, end );
 			AudioUtils.FX( start, end, AudioUtils.FXBank.FadeOut() );
@@ -2872,8 +2940,9 @@
 					if (!region) return ;
 				}
 
-				var start = q.TrimTo (region.start, 3);
-			var end = q.TrimTo ((region.end - region.start), 3);
+				var rb = q.RegionSampleBounds (region);
+			var start = rb.start;
+			var end = rb.duration;
 			if (end <= 0.002) {
 				OneUp ('Selection too short', 1200);
 				return ;
@@ -2977,8 +3046,9 @@
 				region = wavesurfer.regions.list[0];
 			}
 
-			var start = q.TrimTo (region.start, 3);
-			var end = q.TrimTo ((region.end - region.start), 3);
+			var rb = q.RegionSampleBounds (region);
+			var start = rb.start;
+			var end = rb.duration;
 
 			AudioUtils.FXPreview( start, end, AudioUtils.FXBank.Gain( val ) );
 
@@ -3010,8 +3080,9 @@
 				region = wavesurfer.regions.list[0];
 			}
 
-			var start = q.TrimTo (region.start, 3);
-			var end = q.TrimTo ((region.end - region.start), 3);
+			var rb = q.RegionSampleBounds (region);
+			var start = rb.start;
+			var end = rb.duration;
 
 			handleStateInline ( start, end );
 			AudioUtils.FX( start, end, AudioUtils.FXBank.Gain( val ) );
@@ -3043,8 +3114,9 @@
 				region = wavesurfer.regions.list[0];
 			}
 
-			var start = q.TrimTo (region.start, 3);
-			var end = q.TrimTo ((region.end - region.start), 3);
+			var rb = q.RegionSampleBounds (region);
+			var start = rb.start;
+			var end = rb.duration;
 
 			AudioUtils.FXPreview( start, end, AudioUtils.FXBank.Speed( fxval ), seek );
 
@@ -3076,8 +3148,9 @@
 				region = wavesurfer.regions.list[0];
 			}
 
-			var start = q.TrimTo (region.start, 3);
-			var end = q.TrimTo ((region.end - region.start), 3);
+			var rb = q.RegionSampleBounds (region);
+			var start = rb.start;
+			var end = rb.duration;
 			var duration = (region.end - region.start) / val;
 			duration = q.TrimTo (duration, 3);
 
@@ -3308,8 +3381,9 @@
 				region = wavesurfer.regions.list[0];
 			}
 
-			var start = q.TrimTo (region.start, 3);
-			var end = q.TrimTo ((region.end - region.start), 3);
+			var rb = q.RegionSampleBounds (region);
+			var start = rb.start;
+			var end = rb.duration;
 			if (end > 8) end = 8;
 			var duration = end / val;
 
@@ -3356,8 +3430,9 @@
 			}
 
 
-			var start = q.TrimTo (region.start, 3);
-			var end = q.TrimTo ((region.end - region.start), 3);
+			var rb = q.RegionSampleBounds (region);
+			var start = rb.start;
+			var end = rb.duration;
 			var selected_duration = region.end - region.start;
 			var fx = AudioUtils.FXBank.Speed( val );
 			var duration = fx.duration ? fx.duration (selected_duration) : selected_duration / val;
