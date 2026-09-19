@@ -176,7 +176,7 @@
 		}
 
 		this.KeyHandler = new app._deps.keyhandler ( this ); // initializing keyhandler
-		this.TopHeader  = new _makeUITopHeader ( _topbarConfig ( app ), this ); // topmost menu
+		this.TopHeader  = new _makeUITopHeader ( _topbarConfig ( app ), this, app ); // topmost menu
 		this.Toolbar    = new _makeUIToolbar ( this ); // main toolbar and controls
 		this.footer     = new _makeUIMainView ( this, app );
 		this.BarBtm     = new _makeUIBarBottom (this, app);
@@ -1515,7 +1515,7 @@
 	// 
 	// TOP-BAR CLASS
 	// 
-	function _makeUITopHeader ( menu_tree, UI ) {
+	function _makeUITopHeader ( menu_tree, UI, app ) {
 		var header = d.createElement ( 'div' );
 		header.className = 'pk_hdr pk_noselect';
 
@@ -1587,6 +1587,70 @@
 			}
 		};
 		build_menus ( header, menu_tree, 0 );
+
+		var zoom_readout = d.createElement ( 'div' );
+		zoom_readout.className = 'pk_hdrinfo';
+		zoom_readout.textContent = 'Visible - (-)   Zoom -';
+		header.appendChild ( zoom_readout );
+
+		// below 1% a plain round() collapses to "Visible 0%", and deep zoom runs
+		// several orders further still, so keep adding digits rather than
+		// flattening everything onto one fixed label
+		function visiblePct ( pct ) {
+			if (pct >= 1) return Math.round (pct);
+			if (pct >= 0.01) return pct.toFixed (2);
+			if (pct >= 0.0001) return pct.toFixed (4);
+			return pct.toExponential (1);
+		}
+
+		// UI.formatTime stops at whole milliseconds, so every deep-zoom span
+		// read as 00:00:000. This one is for the readout only; the clock format
+		// used everywhere else stays as it is.
+		function visibleSpan ( secs ) {
+			if (secs >= 0.001) return UI.formatTime (secs);
+			if (secs >= 0.000001) return (secs * 1000).toFixed (3) + ' ms';
+			return (secs * 1000000).toFixed (3) + ' \u00b5s';
+		}
+
+		function groupThousands ( n ) {
+			return ('' + n).replace (/\B(?=(\d{3})+(?!\d))/g, ',');
+		}
+
+		function updateZoomReadout ( zoom ) {
+			var wavesurfer = app.engine && app.engine.wavesurfer;
+			var duration = wavesurfer && wavesurfer.getDuration ? wavesurfer.getDuration () : 0;
+			var factor = zoom && zoom[0];
+
+			if (!(factor > 0) && wavesurfer) factor = wavesurfer.ZoomFactor;
+			if (!(duration > 0) || !(factor > 0)) {
+				zoom_readout.textContent = 'Visible - (-)   Zoom -';
+				return ;
+			}
+
+			var visible_duration = wavesurfer.VisibleDuration;
+			if (!(visible_duration > 0)) visible_duration = duration / factor;
+
+			var txt = 'Visible ' + visiblePct (100 / factor) + '% (' +
+				visibleSpan (visible_duration) + ')';
+
+			// once individual samples are being drawn, their count is the number
+			// that actually tells you where you are
+			var buffer = wavesurfer.backend && wavesurfer.backend.buffer;
+			var sample_mode = wavesurfer.computeLod && wavesurfer.drawer &&
+				wavesurfer.computeLod (wavesurfer.drawer.width);
+
+			if (sample_mode && buffer)
+				txt += ' \u00b7 ' + Math.round (visible_duration * buffer.sampleRate) + ' samples';
+
+			zoom_readout.textContent = txt + '   Zoom ' +
+				groupThousands (Math.round (factor * 100)) + '%';
+		}
+
+		UI.listenFor ( 'DidZoom', updateZoomReadout );
+		UI.listenFor ( 'DidUpdateLen', updateZoomReadout );
+		UI.listenFor ( 'DidUnloadFile', function () {
+			zoom_readout.textContent = 'Visible - (-)   Zoom -';
+		} );
 		
 		this.getOpenElement = function () {
 			return target_el;
@@ -3454,8 +3518,95 @@
 		selection.appendChild ( btn_clear_selection );
 		
 		toolbar.appendChild ( timing );
-		
-		
+
+		// This panel controls waveform paint only; it deliberately does not
+		// alter the waveform canvas or application background colours.
+		var wave_palette = d.createElement ( 'div' );
+		wave_palette.className = 'pk_wavepalette';
+		var saved_wave_mode = w.localStorage && w.localStorage.pk_classicpixel === '1' ? 'classicPixel' :
+			w.localStorage && w.localStorage.pk_spectralribbon === '1' ? 'spectralRibbon' :
+			w.localStorage && w.localStorage.pk_creativewave === '1' ? 'creativeWave' :
+			w.localStorage && w.localStorage.pk_recycleshade === '1' ? 'recycleShade' :
+			w.localStorage && w.localStorage.pk_wavegradient === '1' ? 'waveGradient' : '';
+		function setWaveDisplayMode ( mode, enabled ) {
+			var wavesurfer = PKAudioEditor.engine.wavesurfer;
+			var modes = ['waveGradient', 'recycleShade', 'creativeWave', 'spectralRibbon', 'classicPixel'];
+			var buttons = [btn_wave_palette, btn_recycle_shade, btn_creative_wave, btn_spectral_ribbon, btn_classic_pixel];
+			var keys = ['pk_wavegradient', 'pk_recycleshade', 'pk_creativewave', 'pk_spectralribbon', 'pk_classicpixel'];
+			for (var ii = 0; ii < modes.length; ++ii) {
+				var active = enabled && modes[ii] === mode;
+				wavesurfer.params[modes[ii]] = active;
+				buttons[ii].classList.toggle ('pk_act', active);
+				if (w.localStorage) w.localStorage[keys[ii]] = active ? '1' : '0';
+			}
+			wavesurfer.drawBuffer (1);
+		}
+		var btn_wave_palette = d.createElement ( 'button' );
+		btn_wave_palette.setAttribute ('tabIndex', -1);
+		btn_wave_palette.className = 'pk_btn pk_wavepalette_btn';
+		btn_wave_palette.innerHTML = 'W<span>Alternar color lila de la onda</span>';
+		if (saved_wave_mode === 'waveGradient')
+			btn_wave_palette.classList.add ('pk_act');
+		btn_wave_palette.onclick = function () {
+			var wavesurfer = PKAudioEditor.engine.wavesurfer;
+			setWaveDisplayMode ('waveGradient', !wavesurfer.params.waveGradient);
+			this.blur ();
+		};
+		wave_palette.appendChild ( btn_wave_palette );
+		toolbar.appendChild ( wave_palette );
+
+		var btn_recycle_shade = d.createElement ( 'button' );
+		btn_recycle_shade.setAttribute ('tabIndex', -1);
+		btn_recycle_shade.className = 'pk_btn pk_recycleshade_btn';
+		btn_recycle_shade.innerHTML = 'R<span>Alternar sombreado local tipo ReCycle</span>';
+		if (saved_wave_mode === 'recycleShade')
+			btn_recycle_shade.classList.add ('pk_act');
+		btn_recycle_shade.onclick = function () {
+			var wavesurfer = PKAudioEditor.engine.wavesurfer;
+			setWaveDisplayMode ('recycleShade', !wavesurfer.params.recycleShade);
+			this.blur ();
+		};
+		wave_palette.appendChild ( btn_recycle_shade );
+
+		var btn_creative_wave = d.createElement ( 'button' );
+		btn_creative_wave.setAttribute ('tabIndex', -1);
+		btn_creative_wave.className = 'pk_btn pk_creativewave_btn';
+		btn_creative_wave.innerHTML = 'C<span>Alternar relieve metálico creativo</span>';
+		if (saved_wave_mode === 'creativeWave')
+			btn_creative_wave.classList.add ('pk_act');
+		btn_creative_wave.onclick = function () {
+			var wavesurfer = PKAudioEditor.engine.wavesurfer;
+			setWaveDisplayMode ('creativeWave', !wavesurfer.params.creativeWave);
+			this.blur ();
+		};
+		wave_palette.appendChild ( btn_creative_wave );
+
+		var btn_spectral_ribbon = d.createElement ( 'button' );
+		btn_spectral_ribbon.setAttribute ('tabIndex', -1);
+		btn_spectral_ribbon.className = 'pk_btn pk_spectralribbon_btn';
+		btn_spectral_ribbon.innerHTML = 'S<span>Alternar cintas espectrales</span>';
+		if (saved_wave_mode === 'spectralRibbon')
+			btn_spectral_ribbon.classList.add ('pk_act');
+		btn_spectral_ribbon.onclick = function () {
+			var wavesurfer = PKAudioEditor.engine.wavesurfer;
+			setWaveDisplayMode ('spectralRibbon', !wavesurfer.params.spectralRibbon);
+			this.blur ();
+		};
+		wave_palette.appendChild ( btn_spectral_ribbon );
+
+		var btn_classic_pixel = d.createElement ( 'button' );
+		btn_classic_pixel.setAttribute ('tabIndex', -1);
+		btn_classic_pixel.className = 'pk_btn pk_classicpixel_btn';
+		btn_classic_pixel.innerHTML = 'P<span>Alternar waveform clásico de píxeles</span>';
+		if (saved_wave_mode === 'classicPixel')
+			btn_classic_pixel.classList.add ('pk_act');
+		btn_classic_pixel.onclick = function () {
+			var wavesurfer = PKAudioEditor.engine.wavesurfer;
+			setWaveDisplayMode ('classicPixel', !wavesurfer.params.classicPixel);
+			this.blur ();
+		};
+		wave_palette.appendChild ( btn_classic_pixel );
+
 		UI.listenFor ('DidChanToggle', function ( chan, val ) {
 			var region = PKAudioEditor.engine.wavesurfer.regions.list[0];
 			if (!region) return ;

@@ -9,6 +9,11 @@
 			if (av) h -= av.offsetHeight - av.clientHeight;
 			return Math.max (1, h);
 		}
+		var savedWaveMode = w.localStorage && w.localStorage.pk_classicpixel === '1' ? 'classicPixel' :
+			w.localStorage && w.localStorage.pk_spectralribbon === '1' ? 'spectralRibbon' :
+			w.localStorage && w.localStorage.pk_creativewave === '1' ? 'creativeWave' :
+			w.localStorage && w.localStorage.pk_recycleshade === '1' ? 'recycleShade' :
+			w.localStorage && w.localStorage.pk_wavegradient === '1' ? 'waveGradient' : '';
 
 		var wavesurfer = WaveSurfer.create ({
 			container: '#' + 'pk_av_' + app.id,
@@ -17,6 +22,14 @@
 			partialRender:false,
 			fillParent:false,
 			pixelRatio:1,
+			// The alternate palette changes only the waveform paint.  Keeping the
+			// choice here means the drawer can redraw it without changing the UI
+			// or the black waveform canvas behind it.
+			waveGradient: savedWaveMode === 'waveGradient',
+			recycleShade: savedWaveMode === 'recycleShade',
+			creativeWave: savedWaveMode === 'creativeWave',
+			spectralRibbon: savedWaveMode === 'spectralRibbon',
+			classicPixel: savedWaveMode === 'classicPixel',
 			progressColor:'rgba(128,85,85,0.24)',
 			splitChannels:true,
 			autoCenter:true,
@@ -35,6 +48,8 @@
 		this.FXPreviewHost = AudioUtils;
 		q.is_ready = false;
 		var snap_sel = !w.localStorage || w.localStorage.pk_snapzc !== '0';
+		// how far, in canvas pixels, a zero-cross snap may pull an endpoint
+		var SNAP_SEARCH_PIXELS = 4;
 		var loadableAudioExtensions = /\.(aac|aif|aiff|flac|m4a|mp3|oga|ogg|opus|wav|wave|webm)$/i;
 		function isLoadableAudioFile ( file ) {
 			var type = (file.type || '').toLowerCase ();
@@ -42,13 +57,47 @@
 			return loadableAudioExtensions.test (file.name || '');
 		}
 
+		// An editable selection is a range of whole samples. Region times arrive
+		// from the pointer as floats, so round them onto the sample grid once,
+		// here, and let every consumer share the same two frames. Seconds are
+		// handed back as well, since that is what Web Audio and the UI take.
+		//
+		// This replaced TrimTo (region.start, 3) at the call sites: truncating
+		// to milliseconds discarded up to 44 samples at 44.1 kHz and flattened
+		// any selection shorter than a millisecond to nothing.
+		this.RegionSampleBounds = function ( region ) {
+			var b = wavesurfer.backend && wavesurfer.backend.buffer;
+			var r = b && b.sampleRate;
+
+			if (!region || !(r > 0))
+				return { startSample : 0, endSample : 0, start : 0, duration : 0 };
+
+			var n = b.length;
+			var s = Math.round (region.start * r);
+			var e = Math.round (region.end * r);
+
+			if (!(s > 0)) s = 0;
+			else if (s > n) s = n;
+
+			if (!(e > s)) e = s;
+			else if (e > n) e = n;
+
+			return {
+				startSample : s,
+				endSample   : e,
+				start       : s / r,
+				duration    : (e - s) / r
+			};
+		};
+
 		this.TrimTo = function( val, num ) {
 			var nums = {'0':1, '1':10, '2':100,'3':1000,'4':10000,'5':100000};
 			var dec = nums[num];
 			return ((val *dec) >> 0) / dec;
 		}
 
-		this.ZeroCrossTime = function ( b, t, c ) {
+		// max_samples, when given, caps how far the search may travel
+		this.ZeroCrossTime = function ( b, t, c, max_samples ) {
 			if (!b) return t;
 			if (t <= 0 || t >= b.duration) return Math.max (0, Math.min (b.duration, t));
 			c = c || 0;
@@ -56,6 +105,7 @@
 			var d = b.getChannelData ( c );
 			var i = Math.max (1, Math.min (d.length - 1, (t * r) >> 0));
 			var m = Math.min ((r / 125) >> 0, i, d.length - i - 1);
+			if (max_samples > 0 && m > max_samples) m = max_samples;
 			for (var j = 0; j <= m; ++j) {
 				var k = i - j;
 				if (d[k] === 0 || d[k - 1] < 0 && d[k] > 0 || d[k - 1] > 0 && d[k] < 0) return k / r;
@@ -65,11 +115,31 @@
 			return t;
 		};
 
+		// The zero-cross search reaches up to sampleRate/125 samples, roughly
+		// 8 ms. That is invisible when a pixel covers many samples, but at
+		// sample-level zoom the whole viewport is a fraction of a millisecond,
+		// so the same snap throws the endpoint dozens of viewports away from
+		// the pointer. Keep the snap inside what is actually on screen.
 		function snapTime ( t ) {
 			var b = wavesurfer.backend && wavesurfer.backend.buffer;
+			if (!b) return t;
+			if (t <= 0 || t >= b.duration) return Math.max (0, Math.min (b.duration, t));
+
 			var c = 0;
-			while (b && c < b.numberOfChannels - 1 && wavesurfer.ActiveChannels && !wavesurfer.ActiveChannels[c]) ++c;
-			return q.ZeroCrossTime ( b, t, c );
+			while (c < b.numberOfChannels - 1 && wavesurfer.ActiveChannels && !wavesurfer.ActiveChannels[c]) ++c;
+
+			var width = wavesurfer.drawer && wavesurfer.drawer.width;
+			var visible = wavesurfer.VisibleDuration || wavesurfer.getDuration ();
+			var per_pixel = width > 0 && visible > 0 ? (visible * b.sampleRate) / width : 0;
+
+			// individual samples are on screen, so land on one: hunting for a
+			// crossing here would only move the endpoint off the sample the
+			// pointer is sitting on
+			if (per_pixel > 0 && per_pixel <= 1)
+				return Math.round (t * b.sampleRate) / b.sampleRate;
+
+			return q.ZeroCrossTime ( b, t, c,
+				per_pixel > 0 ? Math.max (1, Math.round (per_pixel * SNAP_SEARCH_PIXELS)) : 0 );
 		}
 		wavesurfer.SnapTime = snap_sel ? snapTime : null;
 
@@ -80,7 +150,9 @@
 			var region = wavesurfer.regions && wavesurfer.regions.list[0];
 			var state = {
 				desc : desc || 'Open Audio',
-				meta : region ? [ q.TrimTo (region.start, 3), q.TrimTo (region.end - region.start, 3) ] : [ q.TrimTo (wavesurfer.getCurrentTime (), 3) ],
+				meta : region ?
+					[ q.RegionSampleBounds (region).start, q.RegionSampleBounds (region).duration ] :
+					[ q.TrimTo (wavesurfer.getCurrentTime (), 3) ],
 				data : buffer
 			};
 			if (cb) state.cb = cb;
@@ -1078,8 +1150,9 @@
 			var region = wavesurfer.regions.list[0];
 			if (!region) return (false);
 
-			var start = q.TrimTo (region.start, 3);
-			var end = q.TrimTo ((region.end - region.start), 3);
+			var rb = q.RegionSampleBounds (region);
+			var start = rb.start;
+			var end = rb.duration;
 
 			var copybuffer = AudioUtils.Copy (
 				start,
@@ -1212,8 +1285,13 @@
 
 			app.fireEvent ('RequestPause');
 
-			var start = q.TrimTo (region.start, 3);
-			var end = q.TrimTo ( (region.end - region.start), 3)
+			var rb = q.RegionSampleBounds (region);
+			var start = rb.start;
+			var end = rb.duration;
+
+			// a selection shorter than the millisecond this is rounded to leaves
+			// nothing to remove, and a zero length buffer cannot be created
+			if (!(end > 0)) return (false);
 
 			app.fireEvent ('StateRequestPush', {
 				desc : use_clipboard ? 'Cut' : 'Delete',
@@ -1259,8 +1337,9 @@
 			var region = wavesurfer.regions.list[0];
 			if (!region) return (false);
 
-			var start = q.TrimTo (region.start, 3);
-			var end = q.TrimTo ((region.end - region.start), 3);
+			var rb = q.RegionSampleBounds (region);
+			var start = rb.start;
+			var end = rb.duration;
 
 			if (end <= 0) return (false);
 
@@ -1302,8 +1381,12 @@
 
 			app.fireEvent('RequestPause');
 
-			var start = q.TrimTo (region.start, 3);
-			var end = q.TrimTo ((region.end - region.start), 3);
+			var rb = q.RegionSampleBounds (region);
+			var start = rb.start;
+			var end = rb.duration;
+
+			// nothing to copy once the selection rounds away to nothing
+			if (!(end > 0)) return (false);
 
 			var copybuffer = AudioUtils.Copy (
 				start,
@@ -1381,8 +1464,9 @@
 				dims = AudioUtils.Insert ( offset, copy_buffer );
 			}
 			else {
-				var start = q.TrimTo (region.start, 3);
-				var end = q.TrimTo ((region.end - region.start), 3);
+				var rb = q.RegionSampleBounds (region);
+				var start = rb.start;
+				var end = rb.duration;
 
 				handleStateInline ( start, end );
 
@@ -1521,8 +1605,9 @@
 				region = wavesurfer.regions.list[0];
 			}
 
-			var start = q.TrimTo (region.start, 3);
-			var end = q.TrimTo ((region.end - region.start), 3);
+			var rb = q.RegionSampleBounds (region);
+			var start = rb.start;
+			var end = rb.duration;
 
 			AudioUtils.FXPreview( start, end, AudioUtils.FXBank.HardLimit ( val ) );
 			app.fireEvent ('DidStartPreview');
@@ -1552,8 +1637,9 @@
 				region = wavesurfer.regions.list[0];
 			}
 
-			var start = q.TrimTo (region.start, 3);
-			var end = q.TrimTo ((region.end - region.start), 3);
+			var rb = q.RegionSampleBounds (region);
+			var start = rb.start;
+			var end = rb.duration;
 
 			handleStateInline ( start, end );
 			AudioUtils.FX( start, end, AudioUtils.FXBank.HardLimit ( val ) );
@@ -1586,8 +1672,9 @@
 				region = wavesurfer.regions.list[0];
 			}
 
-			var start = q.TrimTo (region.start, 3);
-			var end = q.TrimTo ((region.end - region.start), 3);
+			var rb = q.RegionSampleBounds (region);
+			var start = rb.start;
+			var end = rb.duration;
 
 			handleStateInline ( start, end );
 			AudioUtils.FX( start, end, AudioUtils.FXBank.ParametricEQ ( val ) );
@@ -1614,8 +1701,9 @@
 				region = wavesurfer.regions.list[0];
 			}
 
-			var start = q.TrimTo (region.start, 3);
-			var end = q.TrimTo ((region.end - region.start), 3);
+			var rb = q.RegionSampleBounds (region);
+			var start = rb.start;
+			var end = rb.duration;
 
 			AudioUtils.FXPreview( start, end, AudioUtils.FXBank.ParametricEQ ( val ) );
 			app.fireEvent ('DidStartPreview');
@@ -1641,8 +1729,9 @@
 				region = wavesurfer.regions.list[0];
 			}
 
-			var start = q.TrimTo (region.start, 3);
-			var end = q.TrimTo ((region.end - region.start), 3);
+			var rb = q.RegionSampleBounds (region);
+			var start = rb.start;
+			var end = rb.duration;
 
 			AudioUtils.FXPreview( start, end, AudioUtils.FXBank.Distortion ( val ) );
 			app.fireEvent ('DidStartPreview');
@@ -1672,8 +1761,9 @@
 				region = wavesurfer.regions.list[0];
 			}
 
-			var start = q.TrimTo (region.start, 3);
-			var end = q.TrimTo ((region.end - region.start), 3);
+			var rb = q.RegionSampleBounds (region);
+			var start = rb.start;
+			var end = rb.duration;
 
 			handleStateInline ( start, end );
 			AudioUtils.FX( start, end, AudioUtils.FXBank.Distortion ( val ) );
@@ -1701,8 +1791,9 @@
 				region = wavesurfer.regions.list[0];
 			}
 
-			var start = q.TrimTo (region.start, 3);
-			var end = q.TrimTo ((region.end - region.start), 3);
+			var rb = q.RegionSampleBounds (region);
+			var start = rb.start;
+			var end = rb.duration;
 
 			AudioUtils.FXPreview( start, end, AudioUtils.FXBank.Delay ( val ) );
 			app.fireEvent ('DidStartPreview');
@@ -1732,8 +1823,9 @@
 				region = wavesurfer.regions.list[0];
 			}
 
-			var start = q.TrimTo (region.start, 3);
-			var end = q.TrimTo ((region.end - region.start), 3);
+			var rb = q.RegionSampleBounds (region);
+			var start = rb.start;
+			var end = rb.duration;
 
 			handleStateInline ( start, end );
 			AudioUtils.FX( start, end, AudioUtils.FXBank.Delay ( val ) );
@@ -1761,8 +1853,9 @@
 				region = wavesurfer.regions.list[0];
 			}
 
-			var start = q.TrimTo (region.start, 3);
-			var end = q.TrimTo ((region.end - region.start), 3);
+			var rb = q.RegionSampleBounds (region);
+			var start = rb.start;
+			var end = rb.duration;
 
 			AudioUtils.FXPreview( start, end, AudioUtils.FXBank.Reverb ( val ) );
 			app.fireEvent ('DidStartPreview');
@@ -1792,8 +1885,9 @@
 				region = wavesurfer.regions.list[0];
 			}
 
-			var start = q.TrimTo (region.start, 3);
-			var end = q.TrimTo ((region.end - region.start), 3);
+			var rb = q.RegionSampleBounds (region);
+			var start = rb.start;
+			var end = rb.duration;
 
 			handleStateInline ( start, end );
 			AudioUtils.FX( start, end, AudioUtils.FXBank.Reverb ( val ) );
@@ -1821,8 +1915,9 @@
 				region = wavesurfer.regions.list[0];
 			}
 
-			var start = q.TrimTo (region.start, 3);
-			var end = q.TrimTo ((region.end - region.start), 3);
+			var rb = q.RegionSampleBounds (region);
+			var start = rb.start;
+			var end = rb.duration;
 
 			AudioUtils.FXPreview( start, end, AudioUtils.FXBank.Compressor ( val ) );
 			app.fireEvent ('DidStartPreview');
@@ -1853,8 +1948,9 @@
 				region = wavesurfer.regions.list[0];
 			}
 
-			var start = q.TrimTo (region.start, 3);
-			var end = q.TrimTo ((region.end - region.start), 3);
+			var rb = q.RegionSampleBounds (region);
+			var start = rb.start;
+			var end = rb.duration;
 
 			handleStateInline ( start, end );
 			AudioUtils.FX( start, end, AudioUtils.FXBank.Compressor ( val ) );
@@ -1880,8 +1976,9 @@
 				region = wavesurfer.regions.list[0];
 			}
 
-			var start = q.TrimTo (region.start, 3);
-			var end = q.TrimTo ((region.end - region.start), 3);
+			var rb = q.RegionSampleBounds (region);
+			var start = rb.start;
+			var end = rb.duration;
 
 			AudioUtils.FXPreview( start, end, fx ( val ) );
 			app.fireEvent ('DidStartPreview');
@@ -1920,8 +2017,9 @@
 				region = wavesurfer.regions.list[0];
 			}
 
-			var start = q.TrimTo (region.start, 3)
-			var end = q.TrimTo ((region.end - region.start), 3)
+			var rb = q.RegionSampleBounds (region);
+			var start = rb.start;
+			var end = rb.duration;
 
 			handleStateInline ( start, end );
 			AudioUtils.FX( start, end, AudioUtils.FXBank.Normalize ( val ) );
@@ -1945,8 +2043,9 @@
 				region = wavesurfer.regions.list[0];
 			}
 
-			var start = q.TrimTo (region.start, 3);
-			var end = q.TrimTo ((region.end - region.start), 3);
+			var rb = q.RegionSampleBounds (region);
+			var start = rb.start;
+			var end = rb.duration;
 
 			done && done (AudioUtils.Loudness (start, end));
 		});
@@ -1974,8 +2073,9 @@
 				region = wavesurfer.regions.list[0];
 			}
 
-			var start = q.TrimTo (region.start, 3);
-			var end = q.TrimTo ((region.end - region.start), 3);
+			var rb = q.RegionSampleBounds (region);
+			var start = rb.start;
+			var end = rb.duration;
 
 			handleStateInline ( start, end );
 			AudioUtils.FX( start, end, AudioUtils.FXBank.NormalizeRMS ( val ) );
@@ -2006,8 +2106,9 @@
 				region = wavesurfer.regions.list[0];
 			}
 
-			var start = q.TrimTo (region.start, 3);
-			var end = q.TrimTo ((region.end - region.start), 3);
+			var rb = q.RegionSampleBounds (region);
+			var start = rb.start;
+			var end = rb.duration;
 
 			handleStateInline ( start, end );
 			AudioUtils.FX( start, end, AudioUtils.FXBank.NormalizeLUFS ( val ) );
@@ -2040,8 +2141,9 @@
 				region = wavesurfer.regions.list[0];
 			}
 
-			var start = q.TrimTo (region.start, 3)
-			var end = q.TrimTo ((region.end - region.start), 3);
+			var rb = q.RegionSampleBounds (region);
+			var start = rb.start;
+			var end = rb.duration;
 
 			handleStateInline ( start, end );
 			AudioUtils.FX( start, end, AudioUtils.FXBank.Invert() );
@@ -2073,8 +2175,9 @@
 				region = wavesurfer.regions.list[0];
 			}
 
-			var start = q.TrimTo (region.start, 3)
-			var end = q.TrimTo ((region.end - region.start), 3);
+			var rb = q.RegionSampleBounds (region);
+			var start = rb.start;
+			var end = rb.duration;
 
 			handleStateInline ( start, end );
 
@@ -2519,8 +2622,9 @@
 				wavesurfer.regions.add ({start:0, end:wavesurfer.getDuration (), id:'t'});
 				region = wavesurfer.regions.list[0];
 			}
-			var start = q.TrimTo (region.start, 3);
-			var end   = q.TrimTo (region.end - region.start, 3);
+			var rb = q.RegionSampleBounds (region);
+			var start = rb.start;
+			var end   = rb.duration;
 			var sr    = wavesurfer.backend.buffer.sampleRate;
 			if (end * sr < 256) return OneUp ('Selection too short', 1200);
 			var freq  = resolveHumFreq (mode, start, end, sr);
@@ -2540,8 +2644,9 @@
 				wavesurfer.regions.add ({start:0, end:wavesurfer.getDuration (), id:'t'});
 				region = wavesurfer.regions.list[0];
 			}
-			var start = q.TrimTo (region.start, 3);
-			var len   = q.TrimTo (region.end - region.start, 3);
+			var rb = q.RegionSampleBounds (region);
+			var start = rb.start;
+			var len   = rb.duration;
 			var sr    = wavesurfer.backend.buffer.sampleRate;
 			if (len * sr < 256) return OneUp ('Selection too short', 1200);
 			var seg = AudioUtils.Copy (start, len);
@@ -2559,8 +2664,9 @@
 				wavesurfer.regions.add ({start:0, end:wavesurfer.getDuration (), id:'t'});
 				region = wavesurfer.regions.list[0];
 			}
-			var start = q.TrimTo (region.start, 3);
-			var end   = q.TrimTo (region.end - region.start, 3);
+			var rb = q.RegionSampleBounds (region);
+			var start = rb.start;
+			var end   = rb.duration;
 			var sr    = wavesurfer.backend.buffer.sampleRate;
 			if (end * sr < 256) return OneUp ('Selection too short', 1200);
 			var freq  = resolveHumFreq (mode, start, end, sr);
@@ -2583,8 +2689,9 @@
 				wavesurfer.regions.add ({start:0, end:wavesurfer.getDuration (), id:'t'});
 				region = wavesurfer.regions.list[0];
 			}
-			var start = q.TrimTo (region.start, 3);
-			var len   = q.TrimTo (region.end - region.start, 3);
+			var rb = q.RegionSampleBounds (region);
+			var start = rb.start;
+			var len   = rb.duration;
 			var sr    = wavesurfer.backend.buffer.sampleRate;
 			if (len * sr < 256) return OneUp ('Selection too short', 1200);
 
@@ -2618,8 +2725,9 @@
 				wavesurfer.regions.add ({start:0, end:wavesurfer.getDuration (), id:'t'});
 				region = wavesurfer.regions.list[0];
 			}
-			var start = q.TrimTo (region.start, 3);
-			var len   = q.TrimTo (region.end - region.start, 3);
+			var rb = q.RegionSampleBounds (region);
+			var start = rb.start;
+			var len   = rb.duration;
 			var sr    = wavesurfer.backend.buffer.sampleRate;
 			if (len * sr < 512) return OneUp ('Selection too short', 1200);
 			var seg = AudioUtils.Copy (start, len);
@@ -2637,8 +2745,9 @@
 				wavesurfer.regions.add ({start:0, end:wavesurfer.getDuration (), id:'t'});
 				region = wavesurfer.regions.list[0];
 			}
-			var start = q.TrimTo (region.start, 3);
-			var len   = q.TrimTo (region.end - region.start, 3);
+			var rb = q.RegionSampleBounds (region);
+			var start = rb.start;
+			var len   = rb.duration;
 			var sr    = wavesurfer.backend.buffer.sampleRate;
 			if (len * sr < 512) return OneUp ('Selection too short', 1200);
 
@@ -2685,8 +2794,9 @@
 				region = wavesurfer.regions.list[0];
 			}
 
-			var start = q.TrimTo (region.start, 3)
-			var end = q.TrimTo ((region.end - region.start), 3);
+			var rb = q.RegionSampleBounds (region);
+			var start = rb.start;
+			var end = rb.duration;
 
 			handleStateInline ( start, end );
 			AudioUtils.FX( start, end, AudioUtils.FXBank.Reverse() );
@@ -2767,8 +2877,9 @@
 				region = wavesurfer.regions.list[0];
 			}
 
-			var start = q.TrimTo (region.start, 3);
-			var end = q.TrimTo ((region.end - region.start), 3);
+			var rb = q.RegionSampleBounds (region);
+			var start = rb.start;
+			var end = rb.duration;
 
 			handleStateInline ( start, end );
 			AudioUtils.FX( start, end, AudioUtils.FXBank.FadeIn() );
@@ -2800,8 +2911,9 @@
 				region = wavesurfer.regions.list[0];
 			}
 
-			var start = q.TrimTo (region.start, 3);
-			var end = q.TrimTo ((region.end - region.start), 3);
+			var rb = q.RegionSampleBounds (region);
+			var start = rb.start;
+			var end = rb.duration;
 
 			handleStateInline ( start, end );
 			AudioUtils.FX( start, end, AudioUtils.FXBank.FadeOut() );
@@ -2841,8 +2953,9 @@
 					if (!region) return ;
 				}
 
-				var start = q.TrimTo (region.start, 3);
-			var end = q.TrimTo ((region.end - region.start), 3);
+				var rb = q.RegionSampleBounds (region);
+			var start = rb.start;
+			var end = rb.duration;
 			if (end <= 0.002) {
 				OneUp ('Selection too short', 1200);
 				return ;
@@ -2946,8 +3059,9 @@
 				region = wavesurfer.regions.list[0];
 			}
 
-			var start = q.TrimTo (region.start, 3);
-			var end = q.TrimTo ((region.end - region.start), 3);
+			var rb = q.RegionSampleBounds (region);
+			var start = rb.start;
+			var end = rb.duration;
 
 			AudioUtils.FXPreview( start, end, AudioUtils.FXBank.Gain( val ) );
 
@@ -2979,8 +3093,9 @@
 				region = wavesurfer.regions.list[0];
 			}
 
-			var start = q.TrimTo (region.start, 3);
-			var end = q.TrimTo ((region.end - region.start), 3);
+			var rb = q.RegionSampleBounds (region);
+			var start = rb.start;
+			var end = rb.duration;
 
 			handleStateInline ( start, end );
 			AudioUtils.FX( start, end, AudioUtils.FXBank.Gain( val ) );
@@ -3012,8 +3127,9 @@
 				region = wavesurfer.regions.list[0];
 			}
 
-			var start = q.TrimTo (region.start, 3);
-			var end = q.TrimTo ((region.end - region.start), 3);
+			var rb = q.RegionSampleBounds (region);
+			var start = rb.start;
+			var end = rb.duration;
 
 			AudioUtils.FXPreview( start, end, AudioUtils.FXBank.Speed( fxval ), seek );
 
@@ -3045,8 +3161,9 @@
 				region = wavesurfer.regions.list[0];
 			}
 
-			var start = q.TrimTo (region.start, 3);
-			var end = q.TrimTo ((region.end - region.start), 3);
+			var rb = q.RegionSampleBounds (region);
+			var start = rb.start;
+			var end = rb.duration;
 			var duration = (region.end - region.start) / val;
 			duration = q.TrimTo (duration, 3);
 
@@ -3277,8 +3394,9 @@
 				region = wavesurfer.regions.list[0];
 			}
 
-			var start = q.TrimTo (region.start, 3);
-			var end = q.TrimTo ((region.end - region.start), 3);
+			var rb = q.RegionSampleBounds (region);
+			var start = rb.start;
+			var end = rb.duration;
 			if (end > 8) end = 8;
 			var duration = end / val;
 
@@ -3325,8 +3443,9 @@
 			}
 
 
-			var start = q.TrimTo (region.start, 3);
-			var end = q.TrimTo ((region.end - region.start), 3);
+			var rb = q.RegionSampleBounds (region);
+			var start = rb.start;
+			var end = rb.duration;
 			var selected_duration = region.end - region.start;
 			var fx = AudioUtils.FXBank.Speed( val );
 			var duration = fx.duration ? fx.duration (selected_duration) : selected_duration / val;
@@ -3520,6 +3639,39 @@
 			var wheel_y = 0;
 			var viewport_draw_raf = 0;
 
+			// Every horizontal zoom control funnels through here, so they all
+			// stop at the same place and always leave the viewport valid:
+			//   1 <= Z <= N / MinVisibleSamples,  V = D / Z,  0 <= L <= D - V
+			// anchor_fraction says where anchor_time should sit afterwards:
+			// 0 at the left edge, 0.5 in the middle, 1 at the right.
+			function clampHorizontalViewport ( requested_zoom, anchor_time, anchor_fraction ) {
+				var buffer = wavesurfer.backend && wavesurfer.backend.buffer;
+				if (!buffer || !buffer.length) return false;
+
+				var dur = wavesurfer.getDuration ();
+				if (!(dur > 0)) return false;
+
+				var max_zoom = wavesurfer.MaxZoomFactor ();
+				var z = requested_zoom;
+				if (!(z > 1)) z = 1;
+				else if (z > max_zoom) z = max_zoom;
+
+				var vis = dur / z;
+				var left = anchor_time - vis * anchor_fraction;
+
+				if (left > dur - vis) left = dur - vis;
+				if (!(left > 0)) left = 0;
+
+				if (z === wavesurfer.ZoomFactor && left === wavesurfer.LeftProgress)
+					return false;
+
+				wavesurfer.ZoomFactor = z;
+				wavesurfer.VisibleDuration = vis;
+				wavesurfer.LeftProgress = left;
+
+				return true;
+			}
+
 			function queueViewportDraw () {
 				if (viewport_draw_raf) return ;
 
@@ -3543,6 +3695,22 @@
 				return Math.max (0, Math.min (1, where));
 			}
 
+			// Any edit that changes the buffer length leaves the viewport
+			// describing audio that may no longer be there: ZoomFactor is a
+			// multiple of the file length and LeftProgress is an absolute offset
+			// in seconds. Cut, Paste, Insert Silence and undo/redo all reach this
+			// through loadDecoded.
+			//
+			// Clamp rather than reset. Cut and Paste should leave you looking
+			// where you were, only inside a valid range; Trim resets explicitly
+			// afterwards because there the file has become the selection.
+			app.listenFor ('DidUpdateLen', function () {
+				if (!q.is_ready) return ;
+
+				if (clampHorizontalViewport ( wavesurfer.ZoomFactor, wavesurfer.LeftProgress, 0 ))
+					queueViewportDraw ();
+			});
+
 			function zoomAt ( factor, where ) {
 				if (!q.is_ready) return ;
 
@@ -3552,21 +3720,10 @@
 
 				var old_vis = wavesurfer.VisibleDuration || dur / wavesurfer.ZoomFactor;
 				var at = wavesurfer.LeftProgress + old_vis * where;
-				var next = Math.max (1, wavesurfer.ZoomFactor * factor);
-				var vis = dur / next;
 
-				if (vis <= 0.5) return ;
-
-				wavesurfer.ZoomFactor = next;
-				wavesurfer.VisibleDuration = vis;
-				wavesurfer.LeftProgress = at - vis * where;
-
-				if (wavesurfer.LeftProgress + vis > dur)
-					wavesurfer.LeftProgress = dur - vis;
-				if (wavesurfer.LeftProgress < 0)
-					wavesurfer.LeftProgress = 0;
-
-				queueViewportDraw ();
+				// keep whatever sits under the pointer under the pointer
+				if (clampHorizontalViewport ( wavesurfer.ZoomFactor * factor, at, where ))
+					queueViewportDraw ();
 			}
 
 			function waveWheel ( e ) {
@@ -3657,73 +3814,28 @@
 		app.listenFor ('RequestZoom', function ( diff, mode ) {
 			var wv = wavesurfer;
 
+			if (mode !== -1 && mode !== 1) return ;
+
 			// compute new ZoomFactor...
 			diff *= wv.ZoomFactor;
 
-			// compute availabel left ZoomFactor
+			var width = wv.drawer.width;
+			var available_pixels = width - width/wv.ZoomFactor;
+			var target = wv.ZoomFactor - 1;
+			if (target <= 0) return ;
+
+			var step = (diff*target)/available_pixels;
+			var next = mode === -1 ? wv.ZoomFactor + step : wv.ZoomFactor - step;
+			var anchor = wv.LeftProgress;
+
+			// the left handle drags the viewport along with it; the right handle
+			// leaves the left edge where it is
 			if (mode === -1)
-			{
-				var width = wv.drawer.width;
-				var available_pixels = width - width/wv.ZoomFactor;
-				var target = wv.ZoomFactor - 1;
-				if (target <= 0) return ;
+				anchor += (wv.getDuration () / (next > 1 ? next : 1)) * (diff / width);
 
-				 var old_zoomfactor = wv.ZoomFactor;
-				 wv.ZoomFactor += (diff*target)/available_pixels;
-				 if (wv.ZoomFactor < 1) wv.ZoomFactor = 1;
-
-				 var new_vis_dur = wv.getDuration() / wv.ZoomFactor;
-
-				 if (new_vis_dur <= 0.5)
-				 {
-				 	wv.ZoomFactor = old_zoomfactor;
-				 	return ;
-				 }
-
-				 wv.VisibleDuration = new_vis_dur;
-
-				var time_moved = wv.VisibleDuration * (diff / wv.drawer.width);
-				wv.LeftProgress += time_moved;
-
-				if (wv.LeftProgress + wv.VisibleDuration >= wv.getDuration ())
-				{
-					wv.LeftProgress = wv.getDuration () - wv.VisibleDuration;
-				}
-				else if (wv.LeftProgress < 0) {
-					wv.LeftProgress = 0;
-				}
-			}
-			else if (mode === 1)
-			{
-				var width = wv.drawer.width;
-				var available_pixels = width - width/wv.ZoomFactor;
-				var target = wv.ZoomFactor - 1;
-				if (target <= 0) return ;
-
-				var old_factor = wv.ZoomFactor;
-				wv.ZoomFactor -= (diff*target)/available_pixels;
-				if (wv.ZoomFactor < 1) wv.ZoomFactor = 1;
-				var temp = wv.getDuration() / wv.ZoomFactor;
-				if (temp + wv.LeftProgress > wv.getDuration()) {
-					wv.ZoomFactor = old_factor;
-				}
-				else
-				{
-					if (temp <= 0.5)
-					{
-						wv.ZoomFactor = old_factor;
-						return ;
-					}
-
-					wv.VisibleDuration = temp;
-				}
-				// -
-			}
-
-			// wv.ZoomFactor -= Math.abs (diff / (wv.drawer.width / 2));
-			// console.log( diff + " BLAH " + wv.ZoomFactor + '   ' +  (diff / wv.drawer.width) );
+			if (clampHorizontalViewport ( next, anchor, 0 ))
 				queueViewportDraw ();
-			});
+		});
 
 			app.listenFor ('RequestPan', function( diff, mode ) {
 				var wv = wavesurfer;
