@@ -186,9 +186,11 @@
 			var root = this.el;
 			var hdr = root.getElementsByClassName ('pk_hdr')[0];
 			var tbc = root.getElementsByClassName ('pk_tbc')[0];
+			var tbc_bottom = root.getElementsByClassName ('pk_tbc_bottom')[0];
 			var ftr = root.getElementsByClassName ('pk_ftr')[0];
 			if (hdr) used += hdr.offsetHeight;
 			if (tbc) used += tbc.offsetHeight;
+			if (tbc_bottom) used += tbc_bottom.offsetHeight;
 			if (ftr) used += ftr.offsetHeight;
 			if (this.BarBtm && this.BarBtm.on) used += this.BarBtm.height;
 			return Math.max (112, h - used);
@@ -1948,20 +1950,23 @@
 	function _makeUIMainView ( UI, app ) {
 		var q = this;
 
+		// Keep the footer controls directly below the toolbar, before the
+		// waveform container in the document flow.
+		var footer = d.createElement ( 'div' );
+		footer.id = 'pk_footer';
+		footer.className = 'pk_ftr pk_noselect';
+		UI.el.appendChild( footer );
+
 		var audio_container = d.createElement ('div');
 		audio_container.className = 'pk_av_cont';
 		UI.el.appendChild( audio_container );
+		UI.el.appendChild ( UI.BottomToolbarContainer );
 
 
 		var main_audio_view = d.createElement ( 'div' );
 		main_audio_view.className = 'pk_av pk_noselect';
 		main_audio_view.id = 'pk_av_' + app.id;
 		audio_container.appendChild( main_audio_view );
-
-		
-		var footer = d.createElement ( 'div' );
-		footer.className = 'pk_ftr pk_noselect';
-		UI.el.appendChild( footer );
 
 		// make panner buttons
 		var btn_panner_cnt = d.createElement ('div');
@@ -2088,14 +2093,123 @@
 		btn_zoom_cnt.appendChild ( btn_zoom_in_h );
 		btn_zoom_cnt.appendChild ( btn_zoom_out_h );
 		btn_zoom_cnt.appendChild ( btn_zoom_reset );
-		btn_zoom_cnt.appendChild ( btn_zoom_in_v );
-		btn_zoom_cnt.appendChild ( btn_zoom_out_v );
+		btn_panner_cnt.appendChild ( btn_zoom_in_v );
+		btn_panner_cnt.appendChild ( btn_zoom_out_v );
 
 		footer.appendChild ( btn_zoom_cnt );
 		// end of zoom btns
 		
 		var wavezoom = d.createElement ( 'div' );
 		wavezoom.className = 'pk_wavescroll';
+		var waveoverview = d.createElement ( 'canvas' );
+		waveoverview.className = 'pk_wavescroll_wave';
+
+		function drawWaveOverview () {
+			var buffer = app.engine && app.engine.wavesurfer &&
+				app.engine.wavesurfer.backend && app.engine.wavesurfer.backend.buffer;
+			var width = wavezoom.clientWidth;
+			var height = 64;
+			if (!buffer || !buffer.length || !width) return ;
+
+			var ratio = Math.min (w.devicePixelRatio || 1, 2);
+			waveoverview.width = Math.ceil (width * ratio);
+			waveoverview.height = height * ratio;
+
+			var ctx = waveoverview.getContext ('2d');
+			ctx.setTransform (ratio, 0, 0, ratio, 0, 0);
+			ctx.fillStyle = '#000';
+			ctx.fillRect (0, 0, width, height);
+			ctx.fillStyle = '#aeb7ff';
+
+			var channels = buffer.numberOfChannels > 1 ? 2 : 1;
+			var channel_height = height / channels;
+			var samples_per_pixel = buffer.length / width;
+
+			for (var channel = 0; channel < channels; ++channel) {
+				var samples = buffer.getChannelData (channel);
+				var center = (channel * channel_height) + (channel_height / 2);
+				var amplitude = channel_height / 2;
+
+				for (var x = 0; x < width; ++x) {
+					var start = Math.floor (x * samples_per_pixel);
+					var end = Math.min (samples.length, Math.floor ((x + 1) * samples_per_pixel));
+					var step = Math.max (1, Math.ceil ((end - start) / 64));
+					var min = 1;
+					var max = -1;
+
+					for (var sample = start; sample < end; sample += step) {
+						var value = samples[sample];
+						if (value < min) min = value;
+						if (value > max) max = value;
+					}
+
+					var top = Math.round (center - (max * amplitude));
+					var bottom = Math.round (center - (min * amplitude));
+					ctx.fillRect (x, top, 1, Math.max (1, bottom - top));
+				}
+			}
+		}
+
+		var waveoverview_pending = false;
+		function scheduleWaveOverview () {
+			if (waveoverview_pending) return ;
+			waveoverview_pending = true;
+			w.requestAnimationFrame (function () {
+				waveoverview_pending = false;
+				drawWaveOverview ();
+			});
+		}
+
+		UI.listenFor ('DidLoadFile', scheduleWaveOverview);
+		// trim, cut, paste, silence, fx and undo all swap the buffer and fire this
+		UI.listenFor ('DidUpdateLen', scheduleWaveOverview);
+		UI.listenFor ('RequestResize', scheduleWaveOverview);
+		w.addEventListener ('resize', scheduleWaveOverview, false);
+
+		// translucent overlay mirroring the active selection onto the overview
+		var waveselect_visible = false;
+		var waveselect = d.createElement ( 'div' );
+		var waveselect_style = waveselect.style;
+		waveselect.className = 'pk_waveselect';
+
+		function drawWaveSelection ( region ) {
+			var wavesurfer = app.engine && app.engine.wavesurfer;
+			var duration = wavesurfer ? wavesurfer.getDuration () : 0;
+
+			if (!region || !duration || region.end <= region.start) {
+				if (waveselect_visible) {
+					waveselect_style.display = 'none';
+					waveselect_visible = false;
+				}
+				return ;
+			}
+
+			var left  = Math.max (0, Math.min (1, region.start / duration));
+			var right = Math.max (0, Math.min (1, region.end / duration));
+
+			waveselect_style.left  = ((left * 10000)>>0)/100 + '%';
+			waveselect_style.width = (((right - left) * 10000)>>0)/100 + '%';
+
+			if (!waveselect_visible) {
+				waveselect_style.display = 'block';
+				waveselect_visible = true;
+			}
+		}
+
+		UI.listenFor ('DidCreateRegion', drawWaveSelection);
+		UI.listenFor ('DidDestroyRegion', function () {
+			drawWaveSelection ( null );
+		});
+		UI.listenFor ('DidUnloadFile', function () {
+			drawWaveSelection ( null );
+		});
+		UI.listenFor ('DidUpdateLen', function () {
+			// the buffer moved under the selection, remap it against the new duration
+			w.requestAnimationFrame (function () {
+				var wavesurfer = app.engine && app.engine.wavesurfer;
+				drawWaveSelection ( wavesurfer && wavesurfer.regions && wavesurfer.regions.list[0] );
+			});
+		});
 
 		var wavepoint_visible = false;
 		var wavepoint = d.createElement ( 'div' );
@@ -2110,10 +2224,12 @@
 		var wavedrag_right = d.createElement ( 'div' );
 		wavedrag_right.className = 'pk_wavedrag_r';
 
+		wavezoom.appendChild ( waveoverview );
 		wavezoom.appendChild ( wavepoint );
 		wavedrag.appendChild ( wavedrag_left );
 		wavedrag.appendChild ( wavedrag_right );
 		wavezoom.appendChild ( wavedrag );
+		wavezoom.appendChild ( waveselect );
 		footer.appendChild ( wavezoom );
 
 		var temp = 0;
@@ -2173,7 +2289,9 @@
 				wavedrag_style.width = '100%';
 				wavedrag_style.left =  '0%';
 				//wavedrag_style.transform = 'translate(0,0)';
-				wavedrag.classList.add ('pk_inact');
+				// The viewport fills the overview, but its edge handles can still
+				// establish the first zoom level.
+				wavedrag.classList.remove ('pk_inact');
 			}
 			else
 			{
@@ -2292,7 +2410,7 @@
 
 				var ev = {
 					is_touch : true,
-					target : wavedrag,
+					target : e.target,
 					clientX: e.touches[0].clientX,
 					stopPropagation: function(){},
 					preventDefault: function(){}
@@ -2311,6 +2429,7 @@
 		this.volumeGaugePeaker2 = d.createElement( 'div' );
 
 		var volume_parent = d.createElement('div');
+		volume_parent.id = 'pk_volume_parent';
 		
 		this.volumeGauge.className = 'pk_volpar';
 		this.volumeGauge2.className = 'pk_volpar';
@@ -2327,6 +2446,7 @@
 		
 		var markers = d.createElement('div');
 		markers.className = 'pk_markers pk_noselect';
+		markers.id = 'pk_markers';
 		
 		var str = '<span class="pk_mark1">-Inf</span>';
 		for (var i = 35; i >= 0; --i)
@@ -2344,7 +2464,7 @@
 			q.volumeGaugePeaker2.className = 'pk_peaker';
 		};
 
-		footer.appendChild( volume_parent );
+		footer.insertBefore ( volume_parent, btn_zoom_cnt );
 
 		// change temp message, it's pretty ugly #### TODO
 		var ttmp = d.createElement('div');
@@ -2441,6 +2561,13 @@
 	function _makeUIToolbar (UI) {
 		var container = d.createElement ( 'div' );
 		container.className = 'pk_tbc';
+		var bottom_container = d.createElement ( 'div' );
+		bottom_container.className = 'pk_tbc pk_tbc_bottom';
+		var bottom_toolbar = d.createElement ( 'div' );
+		bottom_toolbar.id = 'pk_bottom_toolbar';
+		bottom_toolbar.className = 'pk_tb pk_tb_bottom pk_noselect';
+		bottom_container.appendChild ( bottom_toolbar );
+		UI.BottomToolbarContainer = bottom_container;
 
 		var toolbar = d.createElement ( 'div' );
 		toolbar.className = 'pk_tb pk_noselect';
@@ -3413,15 +3540,15 @@
 		
 		var selection = d.createElement( 'div' );
 		selection.className = 'pk_selection';
-		selection.innerHTML = '<div class="pk_sellist">' + 
-			'<span class="pk_title">Selection:</span>' + 
-			'<div><span class="title">Start:</span><span class="s_s pk_dat">-</span></div>' + 
+		selection.innerHTML = '<div class="pk_sellist">' +
+			'<div><span class="title">Start:</span><span class="s_s pk_dat">-</span></div>' +
 			'<div><span class="title">End:</span><span class="s_e pk_dat">-</span></div>' + 
 			'<div><span  class="title">Duration:</span><span class="s_d pk_dat">-</span></div>' +
 		'</div>';
 		
 		var btn_clear_selection = d.createElement ('button');
 		btn_clear_selection.setAttribute('tabIndex', -1);
+		btn_clear_selection.setAttribute('aria-label', 'Clear selection');
 		btn_clear_selection.className = 'pk_btn icon-clearsel pk_inact';
 		btn_clear_selection.innerHTML = '<span>Clear Selection (Q key)</span>';
 
@@ -3517,22 +3644,23 @@
 		};
 		selection.appendChild ( btn_clear_selection );
 		
-		toolbar.appendChild ( timing );
+		bottom_toolbar.appendChild ( timing );
 
 		// This panel controls waveform paint only; it deliberately does not
 		// alter the waveform canvas or application background colours.
 		var wave_palette = d.createElement ( 'div' );
 		wave_palette.className = 'pk_wavepalette';
-		var saved_wave_mode = w.localStorage && w.localStorage.pk_classicpixel === '1' ? 'classicPixel' :
+		var saved_wave_mode = w.localStorage && w.localStorage.pk_bluewave === '1' ? 'blueWave' :
+			w.localStorage && w.localStorage.pk_classicpixel === '1' ? 'classicPixel' :
 			w.localStorage && w.localStorage.pk_spectralribbon === '1' ? 'spectralRibbon' :
 			w.localStorage && w.localStorage.pk_creativewave === '1' ? 'creativeWave' :
 			w.localStorage && w.localStorage.pk_recycleshade === '1' ? 'recycleShade' :
 			w.localStorage && w.localStorage.pk_wavegradient === '1' ? 'waveGradient' : '';
 		function setWaveDisplayMode ( mode, enabled ) {
 			var wavesurfer = PKAudioEditor.engine.wavesurfer;
-			var modes = ['waveGradient', 'recycleShade', 'creativeWave', 'spectralRibbon', 'classicPixel'];
-			var buttons = [btn_wave_palette, btn_recycle_shade, btn_creative_wave, btn_spectral_ribbon, btn_classic_pixel];
-			var keys = ['pk_wavegradient', 'pk_recycleshade', 'pk_creativewave', 'pk_spectralribbon', 'pk_classicpixel'];
+			var modes = ['waveGradient', 'recycleShade', 'creativeWave', 'spectralRibbon', 'classicPixel', 'blueWave'];
+			var buttons = [btn_wave_palette, btn_recycle_shade, btn_creative_wave, btn_spectral_ribbon, btn_classic_pixel, btn_blue_wave];
+			var keys = ['pk_wavegradient', 'pk_recycleshade', 'pk_creativewave', 'pk_spectralribbon', 'pk_classicpixel', 'pk_bluewave'];
 			for (var ii = 0; ii < modes.length; ++ii) {
 				var active = enabled && modes[ii] === mode;
 				wavesurfer.params[modes[ii]] = active;
@@ -3607,6 +3735,19 @@
 		};
 		wave_palette.appendChild ( btn_classic_pixel );
 
+		var btn_blue_wave = d.createElement ( 'button' );
+		btn_blue_wave.setAttribute ('tabIndex', -1);
+		btn_blue_wave.className = 'pk_btn pk_bluewave_btn';
+		btn_blue_wave.innerHTML = 'B<span>Alternar onda azul con borde cian</span>';
+		if (saved_wave_mode === 'blueWave')
+			btn_blue_wave.classList.add ('pk_act');
+		btn_blue_wave.onclick = function () {
+			var wavesurfer = PKAudioEditor.engine.wavesurfer;
+			setWaveDisplayMode ('blueWave', !wavesurfer.params.blueWave);
+			this.blur ();
+		};
+		wave_palette.appendChild ( btn_blue_wave );
+
 		UI.listenFor ('DidChanToggle', function ( chan, val ) {
 			var region = PKAudioEditor.engine.wavesurfer.regions.list[0];
 			if (!region) return ;
@@ -3632,14 +3773,15 @@
 
 		// end
 		toolbar.appendChild ( btn_groups );
-		btn_groups.appendChild ( transport );
 		btn_groups.appendChild ( actions );
-		toolbar.appendChild ( selection );
+		bottom_toolbar.appendChild ( transport );
+		bottom_toolbar.appendChild ( selection );
 
 		container.appendChild ( toolbar );
 
 		UI.el.appendChild ( container );
 		_bindToolbarTips ( UI, container );
+		_bindToolbarTips ( UI, bottom_container );
 
 		var _appEl = d.getElementById('app');
 

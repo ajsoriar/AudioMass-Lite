@@ -9,7 +9,8 @@
 			if (av) h -= av.offsetHeight - av.clientHeight;
 			return Math.max (1, h);
 		}
-		var savedWaveMode = w.localStorage && w.localStorage.pk_classicpixel === '1' ? 'classicPixel' :
+		var savedWaveMode = w.localStorage && w.localStorage.pk_bluewave === '1' ? 'blueWave' :
+			w.localStorage && w.localStorage.pk_classicpixel === '1' ? 'classicPixel' :
 			w.localStorage && w.localStorage.pk_spectralribbon === '1' ? 'spectralRibbon' :
 			w.localStorage && w.localStorage.pk_creativewave === '1' ? 'creativeWave' :
 			w.localStorage && w.localStorage.pk_recycleshade === '1' ? 'recycleShade' :
@@ -30,6 +31,7 @@
 			creativeWave: savedWaveMode === 'creativeWave',
 			spectralRibbon: savedWaveMode === 'spectralRibbon',
 			classicPixel: savedWaveMode === 'classicPixel',
+			blueWave: savedWaveMode === 'blueWave',
 			progressColor:'rgba(128,85,85,0.24)',
 			splitChannels:true,
 			autoCenter:true,
@@ -3815,6 +3817,22 @@
 			var wv = wavesurfer;
 
 			if (mode !== -1 && mode !== 1) return ;
+
+			// At 100% the old proportional calculation had a zero-sized
+			// denominator (ZoomFactor - 1), so neither overview handle could
+			// start a zoom. Convert the first inward drag directly from the
+			// overview width into a visible-range fraction.
+			if (wv.ZoomFactor <= 1) {
+				var first_width = Math.max (1, wv.drawer.width);
+				var inward = mode === -1 ? diff : -diff;
+				if (!(inward > 0)) return ;
+				var fraction = Math.min (0.95, inward / first_width);
+				var first_next = 1 / (1 - fraction);
+				var first_anchor = mode === -1 ? wv.getDuration () * fraction : 0;
+				if (clampHorizontalViewport ( first_next, first_anchor, 0 ))
+					queueViewportDraw ();
+				return ;
+			}
 
 			// compute new ZoomFactor...
 			diff *= wv.ZoomFactor;
