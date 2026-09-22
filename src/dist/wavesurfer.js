@@ -1562,6 +1562,10 @@ var MultiCanvas = function (_Drawer) {
                 if (i === from) ctx.moveTo (x, halfH - h + offsetY);
                 else ctx.lineTo (x, halfH - h + offsetY);
             }
+            // LOD draws the waveform as a line rather than a filled hull.
+            // Use the cyan contour here as well so blueWave stays legible at
+            // zoomed-out levels and on long audio files.
+            if (this.params.blueWave) ctx.strokeStyle = '#00e5ed';
             ctx.stroke();
 
             if (lod.points) {
@@ -1647,7 +1651,11 @@ var MultiCanvas = function (_Drawer) {
             {
                 // ReCycle-inspired waveform paint: only the waveform changes.
                 // The canvas is still cleared to its existing black background.
-                if (this.params.waveGradient) {
+                if (this.params.blueWave) {
+                    // The reference-style waveform is a dense blue body with
+                    // a bright cyan contour; the guide line is painted below.
+                    ctx.fillStyle = '#2d7dcc';
+                } else if (this.params.waveGradient) {
                     var waveGradient = ctx.createLinearGradient(0, offsetY, 0, offsetY + halfH * 2);
                     waveGradient.addColorStop(0, '#f2efff');
                     waveGradient.addColorStop(0.32, '#c5bcff');
@@ -1719,9 +1727,28 @@ var MultiCanvas = function (_Drawer) {
 
             ctx.closePath();
             ctx.fill();
+            if (this.params.blueWave) {
+                ctx.save();
+                ctx.strokeStyle = '#00e5ed';
+                ctx.lineWidth = 1 / (this.params.pixelRatio || 1);
+                ctx.stroke();
+                ctx.restore();
+            }
 
             }
 
+            }
+
+            if (this.params.blueWave) {
+                // Keep the zero axis readable, as in the supplied reference.
+                ctx.save();
+                ctx.strokeStyle = 'rgba(220,250,255,.85)';
+                ctx.lineWidth = 1 / (this.params.pixelRatio || 1);
+                ctx.beginPath();
+                ctx.moveTo(0, halfH + offsetY + this.halfPixel);
+                ctx.lineTo(this.width, halfH + offsetY + this.halfPixel);
+                ctx.stroke();
+                ctx.restore();
             }
 
             if (lim)
